@@ -1,0 +1,59 @@
+# Dependencies and generated builds
+node_modules/
+target/
+/app/build/
+/app/dist/
+/app/releases/
+/app/desktop/dist/
+/app/desktop/src-tauri/gen/
+/releases/
+*.exe
+*.dll
+*.pdb
+*.obj
+*.o
+*.zip
+*.msi
+
+# Local task data, credentials, configuration backups and caches
+.codex/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.playwright-cli/
+.playwright/
+playwright-report/
+test-results/
+*.log
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.bak
+*.tmp
+
+# Synthetic fixture required by Rust include_bytes! compatibility tests
+!/app/desktop/reporter/tests/fixtures/legacy-events.sqlite3
+
+# Local research, private acceptance evidence and historical prototypes
+/verification/
+/evidence/
+/app/docs/
+/docs/prototypes/
+/verification-report.md
+/SHA256SUMS*.json
+/publication-local/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

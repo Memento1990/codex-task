@@ -1,0 +1,1 @@
+{"identifier":"desktop-local","description":"Only local application windows can receive application events.","windows":["main","completed","toast"],"permissions":["core:event:allow-listen","core:event:allow-unlisten","core:event:allow-emit"]}

@@ -1,0 +1,224 @@
+[
+  {
+    "id": "synthetic-host:restart",
+    "session_id": "restart",
+    "host_id": "synthetic-host",
+    "cwd": "C:/isolated",
+    "title": "新的独立任务",
+    "status": "running",
+    "runtime": "unknown",
+    "runtime_at": 0,
+    "updated_at": 1700000100,
+    "revision": 1,
+    "plan": [
+      {
+        "id": "verify",
+        "title": "检查",
+        "status": "inProgress",
+        "note": "",
+        "timing": {
+          "started_at": 1700000100.0,
+          "ended_at": null,
+          "seconds": 0,
+          "since": 1700000100.0,
+          "partial": false
+        }
+      }
+    ],
+    "blockers": [],
+    "evidence": [],
+    "current_step": "检查",
+    "agents": {},
+    "active_tools": {},
+    "history": [
+      {
+        "kind": "progress",
+        "at": 1700000100,
+        "tool": "",
+        "status": "running",
+        "agent_id": ""
+      },
+      {
+        "kind": "progress",
+        "at": 1700000090,
+        "tool": "",
+        "status": "completed",
+        "agent_id": ""
+      }
+    ],
+    "timing": {
+      "started_at": 1700000100.0,
+      "ended_at": null,
+      "seconds": 0,
+      "since": 1700000100.0,
+      "partial": false
+    }
+  },
+  {
+    "id": "synthetic-host:native-plan",
+    "session_id": "native-plan",
+    "host_id": "synthetic-host",
+    "cwd": "C:/isolated",
+    "title": "",
+    "status": "unreported",
+    "runtime": "unknown",
+    "runtime_at": 0,
+    "updated_at": 1700000080,
+    "revision": -1,
+    "plan": [
+      {
+        "id": "plan-1",
+        "title": "原生清单",
+        "status": "inProgress",
+        "note": "",
+        "timing": {
+          "started_at": 1700000080.0,
+          "ended_at": null,
+          "seconds": 0,
+          "since": 1700000080.0,
+          "partial": false
+        }
+      }
+    ],
+    "blockers": [],
+    "evidence": [],
+    "current_step": "",
+    "agents": {},
+    "active_tools": {},
+    "history": [
+      {
+        "kind": "plan",
+        "at": 1700000080,
+        "tool": "",
+        "status": "",
+        "agent_id": ""
+      }
+    ],
+    "plan_at": 1700000080,
+    "timing": {
+      "started_at": 1700000080.0,
+      "ended_at": null,
+      "seconds": 0,
+      "since": 1700000080.0,
+      "partial": false
+    }
+  },
+  {
+    "id": "synthetic-host:legacy",
+    "session_id": "legacy",
+    "host_id": "synthetic-host",
+    "cwd": "C:/isolated",
+    "title": "旧版兼容验收",
+    "status": "completed",
+    "runtime": "idle",
+    "runtime_at": 1700000040,
+    "updated_at": 1700000070,
+    "revision": 2,
+    "plan": [
+      {
+        "id": "verify",
+        "title": "检查",
+        "status": "completed",
+        "note": "",
+        "timing": {
+          "started_at": 1700000010.0,
+          "ended_at": 1700000050.0,
+          "seconds": 40.0,
+          "since": null,
+          "partial": false
+        }
+      }
+    ],
+    "blockers": [
+      {
+        "id": "dep",
+        "title": "依赖",
+        "reason": "",
+        "impact": "",
+        "owner": "Codex",
+        "resolve_when": "",
+        "open": false,
+        "timing": {
+          "started_at": 1700000030.0,
+          "ended_at": 1700000050.0,
+          "seconds": 20.0,
+          "since": null,
+          "partial": false
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "label": "合成证据",
+        "reference": ""
+      }
+    ],
+    "current_step": "检查",
+    "agents": {
+      "child": {
+        "runtime": "active",
+        "updated_at": 1700000070,
+        "tool_name": ""
+      }
+    },
+    "active_tools": {},
+    "history": [
+      {
+        "kind": "SubagentStart",
+        "at": 1700000070,
+        "tool": "",
+        "status": "",
+        "agent_id": "child"
+      },
+      {
+        "kind": "progress",
+        "at": 1700000060,
+        "tool": "",
+        "status": "running",
+        "agent_id": ""
+      },
+      {
+        "kind": "progress",
+        "at": 1700000050,
+        "tool": "",
+        "status": "completed",
+        "agent_id": ""
+      },
+      {
+        "kind": "Stop",
+        "at": 1700000040,
+        "tool": "",
+        "status": "",
+        "agent_id": ""
+      },
+      {
+        "kind": "progress",
+        "at": 1700000030,
+        "tool": "",
+        "status": "blocked",
+        "agent_id": ""
+      },
+      {
+        "kind": "progress",
+        "at": 1700000010,
+        "tool": "",
+        "status": "running",
+        "agent_id": ""
+      },
+      {
+        "kind": "SessionStart",
+        "at": 1700000000,
+        "tool": "",
+        "status": "",
+        "agent_id": ""
+      }
+    ],
+    "timing": {
+      "started_at": 1700000010.0,
+      "ended_at": 1700000050.0,
+      "seconds": 40.0,
+      "since": null,
+      "partial": false
+    }
+  }
+]

@@ -1,0 +1,16 @@
+* text=auto
+*.md text eol=lf
+*.rs text eol=lf
+*.ts text eol=lf
+*.svelte text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.ico binary
+*.sqlite3 binary
+# Preserve upstream license text verbatim, including original whitespace.
+docs/THIRD-PARTY-NOTICES.txt -whitespace

@@ -1,0 +1,25 @@
+{
+  "name": "codex-floatboard-desktop",
+  "private": true,
+  "version": "0.7.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 4390 --strictPort",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "pnpm check && vite build",
+    "tauri": "tauri",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "svelte": "5.57.3"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "5.1.1",
+    "@tauri-apps/cli": "2.11.3",
+    "@types/node": "22.15.30",
+    "svelte-check": "4.7.7",
+    "typescript": "5.8.3",
+    "vite": "6.4.1"
+  }
+}

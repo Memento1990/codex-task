@@ -1,0 +1,3 @@
+PySide6==6.9.2
+shiboken6==6.9.2
+tomlkit==0.13.2

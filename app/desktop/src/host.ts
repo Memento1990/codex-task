@@ -1,0 +1,10 @@
+import { invoke } from '@tauri-apps/api/core';
+import { emit, listen } from '@tauri-apps/api/event';
+import type { Options, Snapshot } from './model';
+export const native = '__TAURI_INTERNALS__' in window;
+export const call = <T = unknown>(method: string, params: Record<string, unknown> = {}) => invoke<T>('bridge', { method, params });
+export const action = (name: string, value: unknown = null) => invoke('host_action', { action: name, value });
+export const onHost = (handler: (value: Record<string, unknown>) => void) => listen<Record<string, unknown>>('host-event', event => handler(event.payload));
+export const sendHost = (value: Record<string, unknown>) => emit('host-event', value);
+export const snapshot = () => call<Snapshot>('snapshot');
+export const saveOptions = (value: Options) => call<Options>('preferences', value as unknown as Record<string,unknown>);
