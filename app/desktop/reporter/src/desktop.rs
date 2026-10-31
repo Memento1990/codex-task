@@ -87,16 +87,49 @@ impl ChangeDetector{
         }self.previous=Some(current);notices
     }
 }
-pub struct Engine{pub root:PathBuf,gui:PathBuf,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64}
+pub struct Engine{pub root:PathBuf,gui:PathBuf,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool}
 impl Engine{
-    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.}}
-    pub fn call(&mut self,method:&str,params:Value)->Result<Value>{match method{
+    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false}}
+    pub fn data_location(&self)->Value{crate::migration::location(&self.root,self.restart_required)}
+    pub fn migrate_data(&mut self,path:&Path)->Result<Value>{
+        if self.restart_required{return Err("数据目录已切换，请先重启看板".into());}
+        let receipt=self.root.join("integration.json");
+        if receipt.exists() {
+            let receipt=read_json(&receipt)?;
+            if receipt["reporter_version"]!=env!("CARGO_PKG_VERSION") {
+                return Err("请先用新版重新连接 Codex，完整重启 Codex 后再迁移".into());
+            }
+        }
+        self.store=None;
+        let previous=self.root.clone();
+        let destination=match crate::migration::migrate(&self.root,path){
+            Ok(destination)=>destination,
+            Err(error)=>{let _=crate::runtime::spawn_worker(&self.root);return Err(error);}
+        };
+        self.root=destination;self.restart_required=true;self.connection=None;self.notices=ChangeDetector::default();
+        let started=crate::runtime::spawn_worker(&self.root);
+        Ok(json!({"success":true,"current":self.root,"path":self.root,"previous":previous,"restart_required":true,"worker_started":started.is_ok(),"warning":started.err(),"old_data_retained":true}))
+    }
+    pub fn call(&mut self,method:&str,params:Value)->Result<Value>{
+        let current=crate::migration::resolve_root(&self.root)?;
+        if current!=self.root{self.store=None;self.root=current;self.restart_required=true;self.connection=None;}
+        if method=="data_location"{return Ok(self.data_location());}
+        if method=="migrate_data"{if params["producers_stopped"]!=true{return Err("迁移前必须退出全部 Codex 会话及其他看板，确认已暂停上报".into());}return self.migrate_data(Path::new(params["path"].as_str().filter(|p|!p.is_empty()).ok_or("请选择新的数据目录")?));}
+        if self.restart_required && !["snapshot","window_load"].contains(&method){return Err("数据目录已切换，请先重启看板".into());}
+        if !["preferences","window_save"].contains(&method){return self.call_inner(method,params);}
+        let root=self.root.clone();
+        crate::migration::with_root(&root,|resolved|{
+            if resolved!=self.root{self.store=None;self.root=resolved.to_path_buf();self.restart_required=true;self.connection=None;return Err("数据目录已切换，请重启看板".into());}
+            self.call_inner(method,params)
+        })
+    }
+    fn call_inner(&mut self,method:&str,params:Value)->Result<Value>{match method{
         "snapshot"=>{
             if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}let tasks=self.store.as_mut().unwrap().tasks()?;
             let notices=if params["notify"]!=false{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
             let healthy=read_json(&self.root.join("health.json")).is_ok_and(|v|v["status"]=="ok"&&v["at"].as_f64().is_some_and(|at|(0.0..5.).contains(&(now()-at))));
             if self.connection.is_none()||now()-self.checked_at>3.{self.connection=Some(integration::connection_state(&self.root));self.checked_at=now();}
-            Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"connection":self.connection,"now":now()}))
+            Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"connection":self.connection,"data_location":self.data_location(),"restart_required":self.restart_required,"now":now()}))
         },
         "preferences"=>save_options(&self.root,&self.gui,&params),
         "preview"=>Ok(json!({"changes":integration::preview(&self.root,params["remove"]==true)?.changes})),
@@ -104,7 +137,7 @@ impl Engine{
         "connect_request"=>Ok(json!(format!("请帮我接入当前 Windows 用户的 Codex 任务看板，保留其他配置和正常 Hook 信任流程。请执行：{}",integration::command_line(&[crate::runtime::reporter_path()?.to_string_lossy().into_owned(),"--connect".into(),"--data-dir".into(),self.root.to_string_lossy().into_owned()])))),
         "disconnect"=>{let plan=integration::preview(&self.root,true)?;let changed=integration::apply(&self.root,&plan)?;self.connection=None;Ok(json!({"success":true,"changed":changed}))},
         "window_load"=>Ok(read_json(&self.root.join("window.json")).ok().filter(|v|v.is_object()).unwrap_or(json!({}))),
-        "window_save"=>{let mut old=self.call("window_load",json!({}))?;for key in ["x","y","width","height","pinned","selected","tab","filter"]{if let Some(value)=params.get(key){let valid=match key{"pinned"=>value.is_boolean(),"selected"|"filter"=>value.as_str().is_some_and(|s|s.len()<=500),"tab"=>value.as_u64().is_some_and(|n|n<=3),"width"=>value.as_f64().is_some_and(|n|(392.0..=100000.).contains(&n)),"height"=>value.as_f64().is_some_and(|n|(570.0..=100000.).contains(&n)),_=>value.as_f64().is_some_and(|n|n.is_finite()&&n.abs()<=100000.)};if !valid{return Err("窗口设置无效".into());}old[key]=value.clone();}}atomic_json(&self.root.join("window.json"),&old)?;Ok(json!(true))},
+        "window_save"=>{let mut old=self.call_inner("window_load",json!({}))?;for key in ["x","y","width","height","pinned","selected","tab","filter"]{if let Some(value)=params.get(key){let valid=match key{"pinned"=>value.is_boolean(),"selected"|"filter"=>value.as_str().is_some_and(|s|s.len()<=500),"tab"=>value.as_u64().is_some_and(|n|n<=3),"width"=>value.as_f64().is_some_and(|n|(392.0..=100000.).contains(&n)),"height"=>value.as_f64().is_some_and(|n|(570.0..=100000.).contains(&n)),_=>value.as_f64().is_some_and(|n|n.is_finite()&&n.abs()<=100000.)};if !valid{return Err("窗口设置无效".into());}old[key]=value.clone();}}atomic_json(&self.root.join("window.json"),&old)?;Ok(json!(true))},
         _=>Err("未知看板操作".into())
     }}
 }

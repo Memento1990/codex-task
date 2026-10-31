@@ -21,7 +21,7 @@ async (page) => {
   await page.getByRole('button',{name:'更多操作',exact:true}).click();await page.getByRole('button',{name:'设置',exact:true}).click();
   await dialog.getByRole('combobox',{name:'主题'}).selectOption('dark');await dialog.getByRole('button',{name:'保存',exact:true}).click();
   await page.locator('.app.dark').waitFor();check('黑色主题即时生效',true);
-  await page.screenshot({path:'docs/evidence/FEAT-008/native-dark.png',scale:'css'});
+  await page.screenshot({path:'test-results/native/native-dark.png',scale:'css'});
   await page.getByRole('button',{name:'更多操作',exact:true}).click();await page.getByRole('button',{name:'设置',exact:true}).click();
   await dialog.getByRole('combobox',{name:'主题'}).selectOption('light');await dialog.getByRole('button',{name:'保存',exact:true}).click();
   await page.locator('.app:not(.dark)').waitFor();

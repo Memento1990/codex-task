@@ -13,7 +13,7 @@ async (page) => {
   await toast.waitForFunction(()=>document.querySelectorAll('.toast').length===4);
   check('最多四条并保留最新',await toast.getByText('合成消息 1',{exact:true}).count()===0&&await toast.getByText('合成消息 5',{exact:true}).isVisible());
   await send(5);check('同一任务消息合并',await toast.locator('.toast').count()===4);
-  await toast.screenshot({path:'docs/evidence/FEAT-008/native-notifications.png',scale:'css'});
+  await toast.screenshot({path:'test-results/native/native-notifications.png',scale:'css'});
   for(let i=0;i<4;i++)await toast.locator('.toast-close').first().click();
   await send('pause',1);await toast.getByText('合成消息 pause',{exact:true}).waitFor();
   await toast.locator('.toast-open').hover();await toast.waitForTimeout(1200);

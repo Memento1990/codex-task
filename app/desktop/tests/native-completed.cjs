@@ -14,7 +14,7 @@ async (page) => {
   check('完成证据可查看',await page.locator('.evidence').count()>0);
   await page.getByRole('button',{name:'动态',exact:true}).click();
   check('完成动态可查看',await page.locator('.activity').count()>0);
-  await page.screenshot({path:'docs/evidence/FEAT-008/native-completed.png',scale:'css'});
+  await page.screenshot({path:'test-results/native/native-completed.png',scale:'css'});
   await page.getByRole('button',{name:'关闭',exact:true}).click();
   await main.getByRole('button',{name:'已完成清单 1 查看 ↗',exact:true}).click();
   await page.getByText('编译检查',{exact:true}).waitFor();

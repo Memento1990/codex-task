@@ -57,15 +57,41 @@ fn change(title:&str,key:&str,before:&Value,after:&Value)->Value{
     json!({"title":title,"key":key,"before":if before.is_null(){"未配置"}else{"已连接"},"after":if after.is_null(){"未配置"}else if before.is_null(){"连接本地 Rust 上报服务"}else{"更新为 Rust 上报服务"},"diff":text(&json!(diff),30000).unwrap_or_default()})
 }
 pub fn preview(root:&Path,remove:bool)->Result<Preview>{preview_at(root,&codex_home(),&reporter_path()?,remove)}
-pub fn connection_state(root:&Path)->Value{match preview(root,false){Ok(p)=>json!({"state":if p.present==10{"ready"}else if p.present>0{"partial"}else{"missing"},"error":"","upgrade_available":p.changed&&p.present>0}),Err(error)=>json!({"state":"error","error":error})}}
+pub fn connection_state(root:&Path)->Value{
+    let observed=read_json(&root.join("hook-status.json")).ok();
+    let registered=fs::read_dir(root.join("sessions")).ok().is_some_and(|entries|entries.flatten().any(|entry|entry.path().extension().is_some_and(|v|v=="json")));
+    let hook_seen=observed.as_ref().is_some_and(|v|v["status"]=="ok")||registered;
+    let hook_error=observed.as_ref().is_some_and(|v|v["status"]=="error");
+    match preview(root,false){
+        Ok(p)=>{
+            let mut diagnostics=Vec::new();
+            if p.present==10&&!hook_seen { diagnostics.push("接入配置已写入，但尚未收到生命周期 Hook。请完整退出并重启 Codex Desktop（仅新建标签页可能仍复用旧 app-server），再按 Codex 的 Hook 管理界面确认启用与信任。".to_string()); }
+            if hook_error { diagnostics.push("Reporter 收到过 Hook，但登记或落盘失败。请检查数据目录可写性，或等待迁移完成后重试；原始输入未保存。".to_string()); }
+            if hook_seen { diagnostics.push("已收到 Hook；若任务仍显示未汇报，请确认当前会话已加载 report_progress 工具并执行结构化进度汇报。简短问答可以不创建清单。".to_string()); }
+            if p.changed&&p.present>0 {diagnostics.push("当前配置仍引用先前的 Reporter；请重新检查连接，完成正常 Hook 信任并重新加载 Codex。".to_string());}
+            json!({"state":if p.present==10{"ready"}else if p.present>0{"partial"}else{"missing"},"error":"","hook_seen":hook_seen,"hook_error":hook_error,"upgrade_available":p.changed&&p.present>0,"diagnostics":diagnostics})
+        },
+        Err(error)=>json!({"state":"error","error":error,"hook_seen":hook_seen})
+    }
+}
 pub fn apply(root:&Path,plan:&Preview)->Result<bool>{
     let _lock=ProcessLock::acquire(&root.join("integration.lock")).map_err(|_|"另一个接入操作正在进行")?;
     if hash(&fs::read(&plan.path).unwrap_or_default())!=plan.before_hash{return Err("配置在预览后发生变化，请重新检查".into());}
-    if !plan.changed{return Ok(false);}
+    if !plan.changed{
+        // A portable in-place upgrade can keep identical command paths. Refresh
+        // only our receipt after preflight; never rewrite Hook trust metadata.
+        if !plan.remove && plan.present==10 {
+            let path=root.join("integration.json");
+            let mut receipt=read_json(&path).unwrap_or(json!({"home":plan.home,"contribution":plan.contribution,"implementation":"rust","status":"applied"}));
+            receipt["reporter_version"]=json!(env!("CARGO_PKG_VERSION"));
+            atomic_json(&path,&receipt)?;
+        }
+        return Ok(false);
+    }
     let backup=root.join("backups").join(format!("{}-{}.toml",crate::now() as u64,uuid::Uuid::new_v4().simple()));
     fs::create_dir_all(backup.parent().unwrap()).map_err(|_|"配置备份目录不可写")?;fs::copy(&plan.path,&backup).or_else(|e|if e.kind()==std::io::ErrorKind::NotFound{fs::write(&backup,[]).map(|_|0)}else{Err(e)}).map_err(|_|"配置备份失败，未修改配置")?;
     if hash(&fs::read(&plan.path).unwrap_or_default())!=plan.before_hash{return Err("配置出现并发修改，请重新检查".into());}
-    let mut receipt=json!({"home":plan.home,"contribution":plan.contribution,"backup":backup,"before_hash":plan.before_hash,"after_hash":hash(&plan.updated),"status":"prepared","implementation":"rust"});
+    let mut receipt=json!({"home":plan.home,"contribution":plan.contribution,"backup":backup,"before_hash":plan.before_hash,"after_hash":hash(&plan.updated),"status":"prepared","implementation":"rust","reporter_version":env!("CARGO_PKG_VERSION")});
     atomic_json(&root.join("integration.json"),&receipt)?;atomic_bytes(&plan.path,&plan.updated)?;
     receipt["status"]=json!(if plan.remove{"removed"}else{"applied"});atomic_json(&root.join("integration.json"),&receipt)?;Ok(true)
 }
@@ -78,4 +104,4 @@ pub fn preflight(reporter:&Path,root:&Path)->Result<()>{
     let valid=String::from_utf8_lossy(&output.stdout).lines().filter_map(|line|serde_json::from_str::<Value>(line).ok()).any(|r|r["id"]==2&&r["result"]["tools"].as_array().is_some_and(|tools|tools.iter().any(|t|t["name"]=="report_progress")));
     if !output.status.success()||!valid{return Err("本地 MCP 预检失败，未改动 Codex 配置".into());}Ok(())
 }
-pub fn connect(root:&Path)->Result<Value>{let plan=preview(root,false)?;preflight(&reporter_path()?,root)?;let changed=apply(root,&plan)?;Ok(json!({"success":true,"state":"ready","changed":changed,"message":"接入已就绪，等待 Codex 首次同步；现有任务无需重启。"}))}
+pub fn connect(root:&Path)->Result<Value>{let plan=preview(root,false)?;preflight(&reporter_path()?,root)?;let changed=apply(root,&plan)?;Ok(json!({"success":true,"state":"ready","changed":changed,"message":"接入配置已就绪；请完整重启 Codex Desktop 或重新加载 CLI 配置，完成正常 Hook 信任后开始任务。收到 Hook 后才能确认同步链路。"}))}

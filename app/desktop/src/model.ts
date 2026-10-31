@@ -4,7 +4,26 @@ export type Blocker = { id: string; title: string; open: boolean; reason: string
 export type Task = { id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: { label: string; reference: string }[]; history: { kind: string; at: number; tool: string; status: string; agent_id: string }[]; timing?: Timer };
 export type Options = { auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
 export type Notice = { task_id: string; title: string; lines: string[]; tab: number };
-export type Snapshot = { tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: { state: string; error?: string } };
+export type Connection = { state: string; error?: string; diagnostics?: unknown; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean };
+export function connectionStatus(connection: Connection): string {
+  if (connection.state === 'ready') return connection.hook_seen ? '已收到 Hook' : '等待首次同步';
+  return connection.state === 'error' ? '接入异常' : connection.state === 'partial' ? '接入待更新' : '尚未接入';
+}
+export type Snapshot = { tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
+export type DataLocation = { current: string; restart_required: boolean };
+export function createTestNoticeFactory() {
+  let sequence = 0;
+  return (options: Options): Notice & {seconds:number;theme:string} => ({task_id:`settings-preview-${++sequence}`,title:'消息通知预览',lines:['任务或清单变化时，在这里提醒。'],tab:0,seconds:options.notification_seconds,theme:options.theme});
+}
+export function noticeStack<T extends Notice>(items: T[], item: T): T[] {
+  return [...items.filter(previous => previous.task_id !== item.task_id), item].slice(-4);
+}
+export function diagnosticText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  if (Array.isArray(value)) return value.map(diagnosticText).filter(Boolean).join('\n');
+  return JSON.stringify(value, null, 2);
+}
 export const defaults: Options = { auto_start: false, show_taskbar: false, theme: 'light', notifications: true, notification_seconds: 3 };
 export const status: Record<string,string> = { running: '执行中', blocked: '有卡点', waiting: '待确认', completed: '已完成', cancelled: '已取消', unreported: '未汇报', pending: '待执行', inProgress: '进行中' };
 export const runtime: Record<string,string> = { active: '运行中', idle: '本轮结束', interrupted: '已中断', waiting_approval: '等待审批', unknown: '未知' };

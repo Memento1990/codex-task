@@ -85,6 +85,14 @@ fn config_migrates_owned_python_paths_and_rejects_concurrent_edit(){
     let temp=Temp::new();let root=temp.0.join("data");let home=temp.0.join("codex");setup_config(&root,&home);let legacy=temp.0.join("legacy/FloatboardReporter.exe");integration::apply(&root,&integration::preview_at(&root,&home,&legacy,false).unwrap()).unwrap();let native=temp.0.join("native/FloatboardReporter.exe");let upgrade=integration::preview_at(&root,&home,&native,false).unwrap();assert_eq!(upgrade.changes.len(),10);integration::apply(&root,&upgrade).unwrap();let source=fs::read_to_string(home.join("config.toml")).unwrap();assert!(!source.contains("legacy"));assert!(source.contains("native"));let remove=integration::preview_at(&root,&home,&native,true).unwrap();fs::write(home.join("config.toml"),format!("{source}\n# concurrent\n")).unwrap();assert!(integration::apply(&root,&remove).is_err());assert!(fs::read_to_string(home.join("config.toml")).unwrap().contains("# concurrent"));
 }
 #[test]
+fn reconnect_refreshes_version_receipt_without_rewriting_config(){
+    let temp=Temp::new();let root=temp.0.join("data");let home=temp.0.join("codex");setup_config(&root,&home);
+    let exe=temp.0.join("FloatboardReporter.exe");integration::apply(&root,&integration::preview_at(&root,&home,&exe,false).unwrap()).unwrap();
+    let path=root.join("integration.json");let mut receipt=store::read_json(&path).unwrap();receipt["reporter_version"]=json!("0.7.0");store::atomic_json(&path,&receipt).unwrap();
+    let before=fs::read(home.join("config.toml")).unwrap();let plan=integration::preview_at(&root,&home,&exe,false).unwrap();assert!(!plan.changed);assert!(!integration::apply(&root,&plan).unwrap());
+    assert_eq!(store::read_json(&path).unwrap()["reporter_version"],env!("CARGO_PKG_VERSION"));assert_eq!(before,fs::read(home.join("config.toml")).unwrap());
+}
+#[test]
 fn advanced_diff_excludes_other_configuration(){
     let temp=Temp::new();let home=temp.0.join("codex");setup_config(&temp.0,&home);let plan=integration::preview_at(&temp.0,&home,&temp.0.join("FloatboardReporter.exe"),false).unwrap();let display=serde_json::to_string(&plan.changes).unwrap();assert!(!display.contains("preserve-model")&&!display.contains("other-hook")&&!display.contains("keep.exe"));assert!(display.contains("--mcp"));
 }

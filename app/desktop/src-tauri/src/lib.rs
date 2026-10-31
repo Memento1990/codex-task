@@ -5,13 +5,15 @@ use tauri::{Emitter, Manager, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, Tr
 use tauri_plugin_opener::OpenerExt;
 use floatboard_core::desktop::Engine;
 
-struct State { engine: Arc<Mutex<Engine>>, root: PathBuf }
+#[derive(Default)]
+struct ToastQueue { ready: bool, pending: Vec<Value> }
+struct State { engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue> }
 
 fn show_main(app:&tauri::AppHandle) { if let Some(w)=app.get_webview_window("main") { let _=w.show(); let _=w.unminimize(); let _=w.set_focus(); } }
 
 #[tauri::command]
 async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, method:String, mut params:Value)->Result<Value,String> {
-    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save"];
+    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data"];
     if !allowed.contains(&method.as_str()) || window.label()!="main" && method!="snapshot" { return Err("此窗口不允许该操作".into()); }
     if window.label()!="main" { params["notify"]=json!(false); }
     let worker=state.engine.clone();
@@ -32,7 +34,7 @@ fn completed(app:&tauri::AppHandle,value:Value)->Result<(),String> {
     else {
         let script=format!("window.__FLOATBOARD_VIEW__={};",json!({"view":"completed","value":value}));
         let theme=app.get_webview_window("main").and_then(|w|w.theme().ok());
-        WebviewWindowBuilder::new(app,"completed",WebviewUrl::App("index.html".into())).title("已完成记录").inner_size(760.,520.).min_inner_size(540.,400.).skip_taskbar(true).theme(theme).initialization_script(&script).build().map_err(|e|e.to_string())?;
+        WebviewWindowBuilder::new(app,"completed",WebviewUrl::App("index.html".into())).title("已完成记录").inner_size(760.,520.).min_inner_size(540.,400.).decorations(false).skip_taskbar(true).theme(theme).initialization_script(&script).build().map_err(|e|e.to_string())?;
     }
     Ok(())
 }
@@ -41,10 +43,24 @@ fn completed(app:&tauri::AppHandle,value:Value)->Result<(),String> {
 // Windows 创建 WebView 走异步命令，避免阻塞消息循环。
 async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, action:String, value:Value)->Result<Value,String> {
     let label=window.label();
-    if label=="toast" && !["toast_size","open_notice","hide"].contains(&action.as_str()) || label=="completed" && !["hide","copy","open_reference"].contains(&action.as_str()) { return Err("窗口操作不允许".into()); }
+    if label=="toast" && !["toast_size","toast_ready","open_notice","hide"].contains(&action.as_str()) || label=="completed" && !["hide","copy","open_reference","drag","minimize","toggle_maximize","window_state"].contains(&action.as_str()) { return Err("窗口操作不允许".into()); }
     match action.as_str() {
         "hide" => { if label=="main" { if let Some(w)=app.get_webview_window("completed"){let _=w.hide();} } window.hide().map_err(|e|e.to_string())?; },
         "quit" => app.exit(0),
+        "drag" => window.start_dragging().map_err(|e|e.to_string())?,
+        "minimize" => window.minimize().map_err(|e|e.to_string())?,
+        "window_state" => return Ok(json!({"maximized":window.is_maximized().map_err(|e|e.to_string())?})),
+        "toggle_maximize" => { if window.is_maximized().map_err(|e|e.to_string())? { window.unmaximize() } else { window.maximize() }.map_err(|e|e.to_string())?; },
+        "restart" => {
+            let worker=state.engine.clone();
+            let root=tauri::async_runtime::spawn_blocking(move||worker.lock().map_err(|_|"本地状态异常".to_string())?.call("data_location",json!({}))).await.map_err(|_|"本地操作已中断")??;
+            let path=root["current"].as_str().ok_or("数据目录不可用")?;
+            let current=std::env::current_exe().map_err(|e|e.to_string())?;
+            // 等待旧 GUI 退出后再启动，防止单实例插件把重启请求转交给旧实例。
+            let script=format!("Wait-Process -Id {} -ErrorAction SilentlyContinue; & '{}' --data-dir '{}'",std::process::id(),current.to_string_lossy().replace('\'',"''"),path.replace('\'',"''"));
+            Command::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe").args(["-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Command",&script]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(0x08000000).spawn().map_err(|e|e.to_string())?;
+            app.exit(0);
+        },
         "pin" => { window.set_always_on_top(value.as_bool().unwrap_or(true)).map_err(|e|e.to_string())?; },
         "completed" => completed(&app,value)?,
         "copy" => { let text=value.as_str().unwrap_or(""); if text.len()>10000 {return Err("文本过长".into());} let mut child=Command::new("C:\\Windows\\System32\\clip.exe").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(0x08000000).spawn().map_err(|e|e.to_string())?; if let Some(mut input)=child.stdin.take() { let bytes:Vec<u8>=text.encode_utf16().flat_map(u16::to_le_bytes).collect(); input.write_all(&[&[0xff,0xfe],bytes.as_slice()].concat()).map_err(|e|e.to_string())?; } let _=child.wait(); },
@@ -54,12 +70,22 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
             if let Some(url)=valid_url { app.opener().open_url(url.as_str(),None::<&str>).map_err(|e|e.to_string())?; }
             else { let path=PathBuf::from(text); let suffix=path.extension().and_then(|s|s.to_str()).unwrap_or("").to_lowercase(); if text.starts_with("\\\\") || !path.is_absolute() || !path.is_file() || !["md","txt","json","log","csv","png","jpg","jpeg","webp","pdf","html"].contains(&suffix.as_str()) {return Err("不支持此证据地址".into());} app.opener().open_path(text,None::<&str>).map_err(|e|e.to_string())?; }
         },
-        "data_folder" => app.opener().open_path(state.root.to_string_lossy().to_string(),None::<&str>).map_err(|e|e.to_string())?,
+        "data_folder" => { let root=state.engine.lock().map_err(|_|"本地状态异常")?.root.clone(); app.opener().open_path(root.to_string_lossy().to_string(),None::<&str>).map_err(|e|e.to_string())?; },
         "toast" => {
-            let existed=app.get_webview_window("toast").is_some();
-            let script=format!("window.__FLOATBOARD_VIEW__={};",json!({"view":"toast","notice":value}));
-            let w=if let Some(w)=app.get_webview_window("toast"){w}else{WebviewWindowBuilder::new(&app,"toast",WebviewUrl::App("index.html".into())).title("任务通知").inner_size(370.,160.).transparent(true).decorations(false).resizable(false).always_on_top(true).skip_taskbar(true).focused(false).focusable(false).visible(false).initialization_script(&script).build().map_err(|e|e.to_string())?};
-            if existed { w.emit("host-event",json!({"type":"notice","value":value})).map_err(|e|e.to_string())?; }
+            let mut queue=state.toasts.lock().map_err(|_|"通知状态异常")?;
+            if queue.ready { if let Some(w)=app.get_webview_window("toast") { w.emit("host-event",json!({"type":"notice","value":value})).map_err(|e|e.to_string())?; } }
+            else {
+                queue.pending.push(value);
+                if queue.pending.len()>4 { queue.pending.remove(0); }
+                if app.get_webview_window("toast").is_none() {
+                    WebviewWindowBuilder::new(&app,"toast",WebviewUrl::App("index.html".into())).title("任务通知").inner_size(370.,160.).transparent(true).decorations(false).resizable(false).always_on_top(true).skip_taskbar(true).focused(false).focusable(false).visible(false).initialization_script("window.__FLOATBOARD_VIEW__={view:'toast'};").build().map_err(|e|e.to_string())?;
+                }
+            }
+        },
+        "toast_ready" => {
+            let mut queue=state.toasts.lock().map_err(|_|"通知状态异常")?;
+            queue.ready=true;
+            for notice in queue.pending.drain(..) { window.emit("host-event",json!({"type":"notice","value":notice})).map_err(|e|e.to_string())?; }
         },
         "toast_size" => {
             let monitor=app.get_webview_window("main").and_then(|w|w.current_monitor().ok().flatten()).or_else(||window.primary_monitor().ok().flatten()).ok_or("屏幕不可用")?;
@@ -87,12 +113,12 @@ pub fn run() {
     let stored=adapter.call("window_load",json!({})).unwrap_or(json!({}));
     let options=floatboard_core::desktop::load_options(&root);
     let worker=Arc::new(Mutex::new(adapter));
-    app.manage(State{engine:worker.clone(),root:root.clone()});
+    app.manage(State{engine:worker.clone(),toasts:Mutex::new(ToastQueue::default())});
 
             let width=stored["width"].as_f64().unwrap_or(772.).max(392.);
             let height=stored["height"].as_f64().unwrap_or(570.).max(570.);
             let theme=if options["theme"]=="dark"{tauri::Theme::Dark}else{tauri::Theme::Light};
-            let w=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())).title("Codex · 卡点调度台").inner_size(width,height).min_inner_size(392.,570.).resizable(true).skip_taskbar(!options["show_taskbar"].as_bool().unwrap_or(false)).theme(Some(theme)).always_on_top(stored["pinned"].as_bool().unwrap_or(true)).build()?;
+            let w=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())).title("Codex · 卡点调度台").inner_size(width,height).min_inner_size(392.,570.).decorations(false).resizable(true).skip_taskbar(!options["show_taskbar"].as_bool().unwrap_or(false)).theme(Some(theme)).always_on_top(stored["pinned"].as_bool().unwrap_or(true)).build()?;
             if let Some(monitor)=w.primary_monitor()? { let work=monitor.work_area();let scale=monitor.scale_factor();let max_w=work.size.width as f64/scale;let max_h=work.size.height as f64/scale;
                 let outer=w.outer_size()?;let inner=w.inner_size()?;
                 let frame_w=(outer.width.saturating_sub(inner.width)) as f64/scale;
@@ -117,8 +143,13 @@ pub fn run() {
         })
         .on_window_event(|w,event|{
             if let tauri::WindowEvent::CloseRequested{api,..}=event { api.prevent_close();let _=w.hide();if w.label()=="main"{if let Some(c)=w.app_handle().get_webview_window("completed"){let _=c.hide();}} }
+            if matches!(event,tauri::WindowEvent::Resized(_)) {
+                let _=w.emit("host-event",json!({"type":"window_state","maximized":w.is_maximized().unwrap_or(false)}));
+            }
             if w.label()=="main" && matches!(event,tauri::WindowEvent::Resized(_)|tauri::WindowEvent::Moved(_)) {
-                if w.is_minimized().unwrap_or(false){return;}
+                let maximized=w.is_maximized().unwrap_or(false);
+                // 只保存正常窗口尺寸，最大化/最小化不覆盖用户的还原尺寸。
+                if w.is_minimized().unwrap_or(false)||maximized{return;}
                 if let (Ok(size),Ok(position),Ok(scale))=(w.inner_size(),w.outer_position(),w.scale_factor()) {let state=w.state::<State>();let params=json!({"width":size.width as f64/scale,"height":size.height as f64/scale,"x":position.x as f64/scale,"y":position.y as f64/scale});let engine=state.engine.clone();tauri::async_runtime::spawn_blocking(move||{if let Ok(mut adapter)=engine.lock(){let _=adapter.call("window_save",params);}});}
             }
         })

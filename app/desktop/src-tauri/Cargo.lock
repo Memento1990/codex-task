@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "codex-floatboard"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "floatboard-core",
  "serde",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "floatboard-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "regex",
  "rusqlite",
