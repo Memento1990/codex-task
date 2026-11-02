@@ -51,7 +51,7 @@ pub fn drain(root:&Path,store:&mut Store)->Result<(usize,usize)>{
         let checked=if size>1_000_000{Err("事件过大".into())}else{read_json(&path)};
         let result=checked.and_then(|event|store.ingest(&event));
         match result{
-            Ok(_)=>{fs::remove_file(path).map_err(|_|"事件确认失败")?;accepted+=1;},
+            Ok(_)=>{if let Ok(event)=read_json(&path){if event["kind"]=="progress" && event["connection_generation"]==crate::bridge::generation(root) && event["reporter_version"]==env!("CARGO_PKG_VERSION"){let _=crate::bridge::observe_event(root,"consumed",event["session_id"].as_str(),event["event_id"].as_str());}}fs::remove_file(path).map_err(|_|"事件确认失败")?;accepted+=1;},
             Err(error) if error.contains("库")||error.contains("保存")||error.contains("不可读")=>return Err(error),
             Err(_)=>{let dir=root.join("rejected");fs::create_dir_all(&dir).map_err(|_|"异常事件目录不可用")?;fs::rename(&path,dir.join(file.file_name())).map_err(|_|"异常事件隔离失败")?;rejected+=1;}
         }

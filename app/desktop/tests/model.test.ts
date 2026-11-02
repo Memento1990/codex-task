@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+import { integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
 test('human elapsed freezes completed timers and distinguishes unknown',()=>{
   assert.equal(elapsed(null,100),'起点未记录');
   assert.equal(elapsed({started_at:null,ended_at:null,seconds:0,since:null,partial:false},100),'未开始');
@@ -25,12 +25,23 @@ test('notification previews are independent and retain only the latest four',()=
   assert.equal(replaced.length,4);
   assert.equal(replaced.at(-1)?.title,'updated');
 });
-test('ready configuration does not imply a lifecycle hook was received',()=>{
-  assert.equal(connectionStatus({state:'ready'}),'等待首次同步');
-  assert.equal(connectionStatus({state:'ready',hook_seen:false}),'等待首次同步');
-  assert.equal(connectionStatus({state:'ready',hook_seen:true}),'已收到 Hook');
-  assert.equal(connectionStatus({state:'error',hook_seen:true}),'接入异常');
-  assert.equal(connectionStatus({state:'partial'}),'接入待更新');
+test('historical hooks and local config do not imply a verified current connection',()=>{
+  for(const state of ['ready','partial','awaiting_reload','awaiting_session','session_received','error']){
+    assert.equal(integrationStep({state,hook_seen:true,mcp_connected:true}).verified,false);
+  }
+  assert.equal(connectionStatus({state:'ready',hook_seen:true}),'连接待验证');
+  assert.equal(connectionStatus({state:'session_received',hook_seen:true}),'已收到当前会话');
+  assert.equal(connectionStatus({state:'sync_verified'}),'同步已验证');
+  assert.equal(integrationStep({state:'sync_verified'}).verified,true);
+});
+test('wizard provides one safe next action for each connection phase',()=>{
+  assert.equal(integrationStep({state:'missing'}).action,'connect');
+  assert.equal(integrationStep({state:'recovery_required',recovery_required:true}).action,'recover');
+  assert.equal(integrationStep({state:'conflict'}).action,'details');
+  for(const state of ['awaiting_reload','awaiting_session','session_received','error','future_state'])assert.equal(integrationStep({state}).action,'check');
+  assert.equal(integrationStep({state:'sync_verified'}).action,'done');
+  assert.match(integrationStep({state:'missing'}).description,/当前用户目录安装/);
+  assert.match(integrationStep({state:'awaiting_reload'}).description,/稍后完成/);
 });
 test('diagnostics preserve strings, arrays and structured details',()=>{
   assert.equal(diagnosticText(undefined),'');

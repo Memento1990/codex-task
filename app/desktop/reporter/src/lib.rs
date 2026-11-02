@@ -5,6 +5,7 @@ pub mod ingest;
 pub mod integration;
 pub mod desktop;
 pub mod migration;
+pub mod bridge;
 
 pub type Result<T> = std::result::Result<T, String>;
 

@@ -50,9 +50,9 @@
 
 ### 1. 下载并启动
 
-当前源码为 **0.8.0 候选版**，尚未发布；更新内容与待验证事项见 [候选说明](docs/releases/v0.8.0.md)。已公开的稳定版本仍为 **0.7.0**。
+当前源码为 **0.8.1**，重构了普通用户接入流程；版本内容与发布状态见 [0.8.1 说明](docs/releases/v0.8.1.md)。0.8.0 为未单独发布的候选版，其窗口、迁移和通知功能已包含在新版中。
 
-从 [Releases](https://github.com/Memento1990/codex-task/releases/latest) 下载 `CodexFloatboard-0.7.0-windows-x64.zip`，完整解压后运行：
+从 [Releases](https://github.com/Memento1990/codex-task/releases/latest) 下载 `CodexFloatboard-0.8.1-windows-x64.zip`，完整解压后运行：
 
 ```text
 CodexFloatboard/
@@ -68,17 +68,19 @@ CodexFloatboard/
 可使用下载页的 `SHA256SUMS.txt` 核对 ZIP：
 
 ```powershell
-Get-FileHash .\CodexFloatboard-0.7.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\CodexFloatboard-0.8.1-windows-x64.zip -Algorithm SHA256
 ```
 
 ### 2. 连接 Codex
 
 1. 在浮窗中打开 **··· → Codex 接入**。
-2. 点击 **连接 Codex**，工具在后台预检、备份并保存本工具的 Hook / MCP 配置。
-3. **完整退出并重启 Codex Desktop**，确保 app-server 重新加载配置；仅新建标签页可能仍复用旧进程。CLI 用户重新启动 CLI。按 Codex 自身要求完成 Hook 启用与信任流程。
-4. 在新会话开始一个多步骤任务。Codex 收到上报上下文后，通过 `codex_floatboard.report_progress` 同步清单、卡点与证据。
+2. 点击 **连接 Codex**。默认接入会在当前用户目录安装小型 Rust 连接组件，预检并备份配置，不需要管理员权限，不修改你的项目。若发现旧版连接，按预览确认恢复或升级；陌生冲突不会覆盖。
+3. 按 Codex 原生界面的提示启用与信任连接。方便时使用 Codex 的重载功能，或完整退出并重启 Desktop；仅新建标签页可能仍复用旧进程。有正在进行的工作可点 **稍后完成**，看板不会结束 Codex。
+4. 在会话中开始一个多步骤任务。接入向导会依次显示 **等待载入 → 已收到当前会话 → 任务同步已验证**，无需再编辑配置或运行脚本。
 
-看到“等待首次同步”表示配置准备好，但还没有收到生命周期 Hook；“已收到 Hook”才表示入口有真实数据，任务清单还需要 MCP 结构化汇报。接入面板的“连接诊断”会区分这两阶段，并提示登记或落盘失败。已有会话不会追溯导入历史清单。
+配置准备好、本地预检通过或历史 Hook 曾成功，都不代表本次同步已通。只有当前连接的真实结构化报告入库后才显示“同步已验证”；没有业务任务不视为失败。已有会话不会追溯导入历史清单。
+
+默认新链路需要支持 MCP-tool Hook 的 Codex；本轮实际验证为 **Codex Desktop 0.166.0-alpha.5.1**。旧版本能力不作保证，建议升级 Codex 后连接。默认数据目录（及其迁移目标）使用固定入口；显式自定义 `--data-dir` / `CODEX_FLOATBOARD_DATA` 的独立便携实例保留旧命令接入模式，不享有全部固定入口能力。
 
 **高级选项**可查看本工具配置差异。接入写入当前 Windows 用户的 `CODEX_HOME/config.toml`，默认是 `%USERPROFILE%\.codex\config.toml`；不改其他连接或全局审批策略，也不代写 Hook 信任记录。
 
@@ -176,12 +178,14 @@ pnpm tauri build --no-bundle
 Pop-Location
 ```
 
-构建完成后，将以下两个文件复制到同一目录：
+构建完成后，默认未配置外部 target 时，将以下两个文件复制到同一目录：
 
 ```text
 app/desktop/src-tauri/target/release/CodexFloatboard.exe
 app/desktop/reporter/target/release/FloatboardReporter.exe
 ```
+
+若设置了 `CARGO_TARGET_DIR` 或 Cargo `build.target-dir`，以上路径会改变。分别运行 `cargo metadata --manifest-path app/desktop/reporter/Cargo.toml --no-deps --format-version 1 --locked` 和宿主 manifest 的同类命令，以 `target_directory` 为准，再从其 `release` 子目录取包。本机按项目划分的外部 target 与 sccache 配置见 [应用说明](app/README.md#本机产物与编译缓存)。
 
 前端布局开发可运行 `pnpm --dir app/desktop dev`。普通浏览器没有原生桥接能力，完整接入、托盘和通知需通过 `pnpm --dir app/desktop tauri dev` 验证。
 

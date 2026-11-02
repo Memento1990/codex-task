@@ -103,9 +103,12 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
 
 pub fn run() {
     let root=floatboard_core::data_root();
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app,_,_|show_main(app)))
-        .plugin(tauri_plugin_opener::init())
+    // Explicit isolated acceptance runs must not activate the user's live GUI.
+    // Normal launches retain the single-instance behavior.
+    let isolated=std::env::args().any(|arg|arg=="--isolated-instance") && std::env::args().any(|arg|arg=="--data-dir") && std::env::var_os("CODEX_HOME").is_some();
+    let builder=tauri::Builder::default();
+    let builder=if isolated{builder}else{builder.plugin(tauri_plugin_single_instance::init(|app,_,_|show_main(app)))};
+    builder.plugin(tauri_plugin_opener::init())
         .setup(move|app|{
     let current=std::env::current_exe().expect("程序路径不可用");
     let _=floatboard_core::runtime::spawn_worker(&root);

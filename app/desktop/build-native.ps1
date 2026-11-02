@@ -11,8 +11,13 @@ $env:VCToolsInstallDir = $taskVc + '\'
 $env:WindowsSdkDir = $taskSdk + '\'
 $env:WindowsSDKVersion = $taskSdkVersion + '\'
 Set-Location -LiteralPath $PSScriptRoot
-if ($Phase -eq 'test-core') { & cargo test --manifest-path reporter/Cargo.toml }
-elseif ($Phase -eq 'reporter') { & cargo build --manifest-path reporter/Cargo.toml --release }
+$taskManifest = if ($Phase -in @('test-core','reporter')) { 'reporter/Cargo.toml' } else { 'src-tauri/Cargo.toml' }
+$taskMetadata = & cargo metadata --manifest-path $taskManifest --no-deps --format-version 1 --locked
+if ($LASTEXITCODE -ne 0) { throw '无法解析 Cargo 构建目录' }
+$taskTarget = ($taskMetadata | ConvertFrom-Json).target_directory
+Write-Output "Cargo target: $taskTarget"
+if ($Phase -eq 'test-core') { & cargo test --manifest-path reporter/Cargo.toml --locked }
+elseif ($Phase -eq 'reporter') { & cargo build --manifest-path reporter/Cargo.toml --release --locked }
 elseif ($Phase -eq 'check') { & cargo check --manifest-path src-tauri/Cargo.toml --locked }
 else { & pnpm tauri build --no-bundle }
 if ($LASTEXITCODE -ne 0) { throw "原生 $Phase 失败" }

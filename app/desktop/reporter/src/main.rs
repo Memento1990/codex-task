@@ -1,9 +1,10 @@
 use std::io::{Read,Write};
 fn main(){
-    let root=floatboard_core::data_root();let args:Vec<String>=std::env::args().collect();
+    if floatboard_core::bridge::is_bridge(){let code=match floatboard_core::bridge::run(){Ok(code)=>code,Err(error)=>{eprintln!("{error}");1}};std::process::exit(code);}
+    let root=floatboard_core::data_root();let _=floatboard_core::bridge::process_generation(&root);let args:Vec<String>=std::env::args().collect();
     let result=if args.iter().any(|a|a=="--worker"){floatboard_core::runtime::worker(&root)}
     else if args.iter().any(|a|a=="--mcp"){
-        if std::env::var("FLOATBOARD_PREFLIGHT").as_deref()!=Ok("1"){let _=floatboard_core::runtime::spawn_worker(&root);}
+        if std::env::var("FLOATBOARD_PREFLIGHT").as_deref()!=Ok("1") && !(cfg!(debug_assertions)&&std::env::var("FLOATBOARD_NO_WORKER").as_deref()==Ok("1")){let _=floatboard_core::runtime::spawn_worker(&root);}
         floatboard_core::ingest::serve_mcp(&root,std::io::stdin().lock(),std::io::stdout().lock())
     }else if args.iter().any(|a|a=="--connect"){
         let result=floatboard_core::integration::connect(&root);let failed=result.is_err();let value=match result{Ok(value)=>value,Err(message)=>serde_json::json!({"success":false,"message":message})};let _=writeln!(std::io::stdout(),"{value}");if failed{std::process::exit(1);}Ok(())
@@ -20,7 +21,7 @@ fn main(){
             let _=floatboard_core::store::atomic_json(&root.join("hook-status.json"),&serde_json::json!({"status":"error","at":floatboard_core::now(),"code":if error.contains("迁移"){"data_busy"}else{"hook_failed"}}));
             serde_json::json!({})
         }};
-        if std::env::var("FLOATBOARD_PREFLIGHT").as_deref()!=Ok("1"){let _=floatboard_core::runtime::spawn_worker(&root);}let _=writeln!(std::io::stdout(),"{result}");Ok(())
+        if std::env::var("FLOATBOARD_PREFLIGHT").as_deref()!=Ok("1") && !(cfg!(debug_assertions)&&std::env::var("FLOATBOARD_NO_WORKER").as_deref()==Ok("1")){let _=floatboard_core::runtime::spawn_worker(&root);}let _=writeln!(std::io::stdout(),"{result}");Ok(())
     };
     if result.is_err(){eprintln!("本地任务服务不可用，Codex 可继续执行");std::process::exit(1);}
 }

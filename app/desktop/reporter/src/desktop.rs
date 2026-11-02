@@ -93,7 +93,7 @@ impl Engine{
     pub fn data_location(&self)->Value{crate::migration::location(&self.root,self.restart_required)}
     pub fn migrate_data(&mut self,path:&Path)->Result<Value>{
         if self.restart_required{return Err("数据目录已切换，请先重启看板".into());}
-        let receipt=self.root.join("integration.json");
+        let receipt=crate::integration::receipt_path(&self.root);
         if receipt.exists() {
             let receipt=read_json(&receipt)?;
             if receipt["reporter_version"]!=env!("CARGO_PKG_VERSION") {
@@ -128,12 +128,12 @@ impl Engine{
             if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}let tasks=self.store.as_mut().unwrap().tasks()?;
             let notices=if params["notify"]!=false{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
             let healthy=read_json(&self.root.join("health.json")).is_ok_and(|v|v["status"]=="ok"&&v["at"].as_f64().is_some_and(|at|(0.0..5.).contains(&(now()-at))));
-            if self.connection.is_none()||now()-self.checked_at>3.{self.connection=Some(integration::connection_state(&self.root));self.checked_at=now();}
+            if self.connection.is_none()||now()-self.checked_at>3.{let mut connection=crate::bridge::decorate_connection(&self.root,integration::connection_state(&self.root));if !healthy && connection["state"]=="sync_verified"{connection["state"]=json!("error");connection["diagnostics"]=json!(["同步曾验证，但当前采集器离线；请检查数据目录权限，稍后再检查连接。"]);}self.connection=Some(connection);self.checked_at=now();}
             Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"connection":self.connection,"data_location":self.data_location(),"restart_required":self.restart_required,"now":now()}))
         },
         "preferences"=>save_options(&self.root,&self.gui,&params),
         "preview"=>Ok(json!({"changes":integration::preview(&self.root,params["remove"]==true)?.changes})),
-        "connect"=>{let result=integration::connect(&self.root)?;self.connection=None;Ok(result)},
+        "connect"=>{let result=integration::connect_with_recovery(&self.root,params["confirm_recovery"]==true)?;self.connection=None;Ok(result)},
         "connect_request"=>Ok(json!(format!("请帮我接入当前 Windows 用户的 Codex 任务看板，保留其他配置和正常 Hook 信任流程。请执行：{}",integration::command_line(&[crate::runtime::reporter_path()?.to_string_lossy().into_owned(),"--connect".into(),"--data-dir".into(),self.root.to_string_lossy().into_owned()])))),
         "disconnect"=>{let plan=integration::preview(&self.root,true)?;let changed=integration::apply(&self.root,&plan)?;self.connection=None;Ok(json!({"success":true,"changed":changed}))},
         "window_load"=>Ok(read_json(&self.root.join("window.json")).ok().filter(|v|v.is_object()).unwrap_or(json!({}))),

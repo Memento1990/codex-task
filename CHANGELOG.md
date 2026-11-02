@@ -2,6 +2,23 @@
 
 本项目使用语义化版本号。GitHub 首次公开发布为 `v0.7.0`，此前版本为本机开发版本。
 
+## [0.8.1] - 2026-11-02
+
+### Codex 接入重构
+
+- 默认接入部署固定用户级 Rust Bridge 与按版本/内容校验的运行时；Codex 不再引用 ZIP 解压目录或重复内嵌数据目录。
+- 核心生命周期改用 MCP-tool Hook，绕开命令 shell 的 AutoRun 污染；SessionEnd 受 Codex 限制仍使用命令 Hook。实际隔离验证版本为 Codex Desktop 0.166.0-alpha.5.1。
+- 接入记录与默认任务数据分离；配置、运行时指针与归属记录采用可恢复 journal，识别 before/after/并发第三态。
+- 缺失归属记录时可预览、明确确认后恢复完整匹配的旧接入；被修改、重复或陌生配置拒绝覆盖或追加。
+- 接入界面只保留一个主流程，等待期间只检查状态，不重复写配置；可稍后完成，不终止 Codex。
+- 仅当前连接代次的真实会话、MCP 初始化和结构化汇报消费证据满足时显示“同步已验证”；本地预检与历史 Hook 不再代替真实验证。
+- 保留 0.8.0 候选版的窗口控制、离线迁移和叠加通知功能。
+
+### 维护
+
+- 清理旧 Python 打包产物和重复发行目录，产品不依赖 Python；恢复能力实现在 Rust 内。
+- 支持本机按项目外置 Cargo target 和全局 sccache，构建脚本报告实际产物路径。
+
 ## 0.8.0 候选版（未发布）
 
 ### 新增
@@ -48,4 +65,5 @@
 
 完整说明见 [v0.7.0](docs/releases/v0.7.0.md)。早期本机版本记录保留在 [app/CHANGELOG.md](app/CHANGELOG.md)。
 
+[0.8.1]: https://github.com/Memento1990/codex-task/releases/tag/v0.8.1
 [0.7.0]: https://github.com/Memento1990/codex-task/releases/tag/v0.7.0

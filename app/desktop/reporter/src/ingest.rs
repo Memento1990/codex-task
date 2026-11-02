@@ -12,7 +12,8 @@ fn hook_at(root:&Path,payload:&Value)->Result<Value>{
     let mut event=json!({"kind":kind,"session_id":session,"host_id":record["host_id"],"cwd":record["cwd"]});
     for key in ["turn_id","agent_id","tool_name","tool_use_id"]{event[key]=json!(store::text(payload.get(key).filter(|v|!v.is_null()).unwrap_or(&json!("")),if key=="tool_name"{200}else{160})?);}
     store::enqueue(root,event.clone())?;
-    store::atomic_json(&root.join("hook-status.json"),&json!({"status":"ok","at":crate::now(),"event":kind}))?;
+    let _=store::atomic_json(&root.join("hook-status.json"),&json!({"status":"ok","at":crate::now(),"event":kind}));
+    let _=crate::bridge::observe(root,"hook",Some(session));
     if kind=="PostToolUse"&&payload["tool_name"]=="update_plan"{
         if let Some(items)=payload["tool_input"]["plan"].as_array(){let plan:Vec<Value>=items.iter().enumerate().filter(|(_,v)|v.is_object()).map(|(i,v)|json!({"id":format!("step-{i}"),"title":v["step"].as_str().unwrap_or(""),"status":match v["status"].as_str().unwrap_or("pending"){"in_progress"=>"inProgress",s=>s}})).collect();event["kind"]=json!("plan");event["plan"]=json!(plan);store::enqueue(root,event)?;}
     }
@@ -26,7 +27,8 @@ pub fn progress(root:&Path,payload:&Value)->Result<Value>{
     crate::migration::with_root(root, |root| progress_at(root,payload))
 }
 fn progress_at(root:&Path,payload:&Value)->Result<Value>{
-    let record=store::authenticate(root,payload)?;let report=store::validate_report(payload)?;let id=store::enqueue(root,json!({"kind":"progress","session_id":record["session_id"],"host_id":record["host_id"],"cwd":record["cwd"],"report":report}))?;
+    let record=store::authenticate(root,payload)?;let report=store::validate_report(payload)?;let id=store::enqueue(root,json!({"kind":"progress","session_id":record["session_id"],"host_id":record["host_id"],"cwd":record["cwd"],"report":report,"connection_generation":crate::bridge::process_generation(root),"reporter_version":env!("CARGO_PKG_VERSION")}))?;
+    let _=crate::bridge::observe_event(root,"report",record["session_id"].as_str(),Some(&id));
     Ok(json!({"accepted":true,"event_id":id,"revision":report["revision"],"message":"进度已持久化到本地邮箱，等待采集。"}))
 }
 pub fn report_schema()->Value{serde_json::from_str(include_str!("report-schema.json")).unwrap()}
@@ -34,8 +36,9 @@ pub fn response(root:&Path,request:&Value)->Option<Value>{
     let id=request.get("id")?.clone();if !request.is_object(){return None;}
     let empty=json!({});let params=request.get("params").filter(|v|!v.is_null()).unwrap_or(&empty);
     let result=if !params.is_object(){Err((-32602,"请求格式错误"))}else{match request["method"].as_str().unwrap_or(""){
-        "initialize"=>Ok(json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"codex_floatboard","version":env!("CARGO_PKG_VERSION")}})),
-        "tools/list"=>Ok(json!({"tools":[{"name":"report_progress","description":"向本地 Codex 任务侧窗汇报当前会话的完整进度、卡点和验收证据；只写本工具的数据目录。使用 Hook 提供的会话绑定信息。","inputSchema":report_schema(),"annotations":{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}}]})),
+        "initialize"=>{let _=crate::bridge::observe(root,"mcp",None);Ok(json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"codex_floatboard","version":env!("CARGO_PKG_VERSION")}}))},
+        "tools/list"=>Ok(json!({"tools":[{"name":"hook_context","description":"接收 Codex 生命周期事件并返回本会话上报上下文；供 Codex Hook 使用，不应由模型手动猜测会话身份。","inputSchema":{"type":"object","properties":{"session_id":{"type":"string"},"cwd":{"type":"string"},"hook_event_name":{"type":"string"}},"required":["session_id","cwd","hook_event_name"],"additionalProperties":true},"annotations":{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}},{"name":"report_progress","description":"向本地 Codex 任务侧窗汇报当前会话的完整进度、卡点和验收证据；只写本工具的数据目录。使用 Hook 提供的会话绑定信息。","inputSchema":report_schema(),"annotations":{"readOnlyHint":false,"destructiveHint":false,"openWorldHint":false}}]})),
+        "tools/call" if params["name"]=="hook_context"=>{let (value,error)=match hook(root,&params["arguments"]){Ok(value)=>(value.to_string(),false),Err(error)=>(error,true)};Ok(json!({"content":[{"type":"text","text":value}],"isError":error}))},
         "tools/call" if params["name"]=="report_progress"=>{let (value,error)=match progress(root,&params["arguments"]){Ok(value)=>(value.to_string(),false),Err(error)=>(error,true)};Ok(json!({"content":[{"type":"text","text":value}],"isError":error}))},
         "tools/call"=>Err((-32602,"请求格式错误")),"ping"=>Ok(json!({})),_=>Err((-32601,"未知方法"))
     }};

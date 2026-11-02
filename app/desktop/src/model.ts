@@ -4,10 +4,24 @@ export type Blocker = { id: string; title: string; open: boolean; reason: string
 export type Task = { id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: { label: string; reference: string }[]; history: { kind: string; at: number; tool: string; status: string; agent_id: string }[]; timing?: Timer };
 export type Options = { auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
 export type Notice = { task_id: string; title: string; lines: string[]; tab: number };
-export type Connection = { state: string; error?: string; diagnostics?: unknown; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean };
+export type Connection = { state: string; config_state?: string; error?: string; diagnostics?: unknown; recovery_required?: boolean; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean; mcp_connected?: boolean };
+export type IntegrationStep = { title:string; description:string; action:'connect'|'recover'|'check'|'details'|'done'; button:string; stage:number; verified:boolean };
+export function integrationStep(connection: Connection): IntegrationStep {
+  const step=(title:string,description:string,action:IntegrationStep['action'],button:string,stage:number,verified=false):IntegrationStep=>({title,description,action,button,stage,verified});
+  switch(connection.state){
+    case 'missing': return step('连接你的 Codex','看板会在当前用户目录安装小型连接程序，并配置 Codex 接入。不需要管理员权限，也不会修改项目。','connect','连接 Codex',0);
+    case 'recovery_required': return step('发现旧版连接','先查看将恢复的配置，再确认恢复连接。未确认前不会接管或覆盖旧配置。','recover','查看并恢复连接',0);
+    case 'conflict': return step('连接配置需要确认','发现不能安全接管的配置。看板未覆盖或追加重复配置，请先查看诊断中的冲突项。','details','查看冲突详情',0);
+    case 'awaiting_reload': return step('配置已准备，等待 Codex 载入','如 Codex 原生界面提示，请确认启用与信任。方便时使用其重载功能，或完整退出并重启 Codex Desktop；仅新建标签页可能复用旧进程。可以稍后完成，不会终止正在进行的任务。','check','检查连接',1);
+    case 'awaiting_session': return step('等待当前 Codex 会话','连接配置已就绪。请在已载入连接的 Codex 中开始或继续会话，看板会自动验证；没有业务任务并不代表失败。','check','检查连接',2);
+    case 'session_received': return step('已收到当前会话','当前会话已到达，尚未验证任务进度同步。正常使用 Codex，收到真实结构化任务汇报后将自动完成验证。','check','检查同步',2);
+    case 'sync_verified': return step('任务同步已验证','已收到当前连接的真实任务汇报。之后任务变化会自动显示在看板。','done','完成',3,true);
+    case 'error': return step('暂时无法验证连接','查看诊断以确认原因。检查只读取当前状态，不会重写配置，也不会停止 Codex。','check','重新检查',0);
+    default: return step('连接尚待验证','当前状态尚未得到完整验证。可检查连接或查看高级诊断；历史记录不代表当前连接已同步。','check','检查连接',1);
+  }
+}
 export function connectionStatus(connection: Connection): string {
-  if (connection.state === 'ready') return connection.hook_seen ? '已收到 Hook' : '等待首次同步';
-  return connection.state === 'error' ? '接入异常' : connection.state === 'partial' ? '接入待更新' : '尚未接入';
+  return ({missing:'尚未接入',recovery_required:'旧连接待恢复',conflict:'接入冲突',awaiting_reload:'等待载入连接',awaiting_session:'等待当前会话',session_received:'已收到当前会话',sync_verified:'同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
 }
 export type Snapshot = { tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
 export type DataLocation = { current: string; restart_required: boolean };
