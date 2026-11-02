@@ -4,6 +4,7 @@
   import { connectionStatus, integrationStep, createTestNoticeFactory, defaults, diagnosticText, done, elapsed, noticeStack, openBlockers, runtime, status, visibleTasks, type Connection, type DataLocation, type Notice, type Options, type Snapshot, type Task } from './model';
   import Icon from './Icon.svelte';
   import TaskDetail from './TaskDetail.svelte';
+  import Updates from './Updates.svelte';
   type Scope = {task_id?: string; scope?: string; tab?: number};
   const initial = (window as unknown as {__FLOATBOARD_VIEW__?:{view:string;value?:Scope;notice?:unknown}}).__FLOATBOARD_VIEW__ || {view:'main'};
   const demo = new URLSearchParams(location.search).has('demo');
@@ -11,7 +12,8 @@
   let tasks = $state<Task[]>([]), options = $state<Options>({...defaults}), healthy = $state(false), connection = $state<Connection>({state:'missing'});
   let selected = $state(''), tab = $state(view === 'main' ? 1 : 0), filter = $state('all'), scope = $state<Scope>(initial.value || {});
   let now = $state(Date.now()/1000), error = $state(''), pinned = $state(true), menu = $state(false), loading = $state(true);
-  let dialog = $state<'settings'|'integration'|null>(null), draft = $state<Options>({...defaults}), busy = $state(false), note = $state(''), advanced = $state(false), disconnectConfirm = $state(false);
+  let updateBusy = $state(false);
+  let dialog = $state<'settings'|'integration'|'updates'|null>(null), draft = $state<Options>({...defaults}), busy = $state(false), note = $state(''), advanced = $state(false), disconnectConfirm = $state(false);
   let changes = $state<{title:string;key:string;before:string;after:string;diff:string}[]>([]);
   let demoHistory = $state(false), scopeTask = $state('');
   let maximized = $state(false), diagnostics = $state(''), connectionError = $state(''), recoveryConfirm = $state(false), recoveryPreviewReady = $state(false);
@@ -84,6 +86,7 @@
   async function loadDiff(remove=false) {advanced=true;try{changes=native?(await call<{changes:typeof changes}>('preview',{remove})).changes:[];}catch(e){note=String(e);}}
   async function confirmDisconnect() {disconnectConfirm=true;await loadDiff(true);}
   async function saveSettings() {
+    if(updateBusy)return;
     if(dataLocation.restart_required){note='数据已迁移，请先重启看板后再保存设置。';return;}
     busy=true;note='';
     try {options=native?await saveOptions(draft):{...draft};dialog=null;}catch(e){note='保存失败：'+String(e);}finally{busy=false;}
@@ -137,7 +140,7 @@
   });
 </script>
 
-<svelte:window onkeydown={e=>{if(e.key==='Escape'){if(dialog&&!busy&&!dataBusy)dialog=null;else if(view==='completed'||demoHistory)void closeView();else menu=false;}}}/>
+<svelte:window onkeydown={e=>{if(e.key==='Escape'){if(dialog&&!busy&&!dataBusy&&!updateBusy)dialog=null;else if(view==='completed'||demoHistory)void closeView();else menu=false;}}}/>
 <div class="app" class:dark={options.theme==='dark'} class:toast-app={view==='toast'}>
 {#if view==='toast'}
   <div class="toast-stack">{#each toasts as toast (toast.key)}<article class="toast" onpointerenter={()=>pauseToast(toast)} onpointerleave={()=>resumeToast(toast)}><button class="toast-open" onclick={()=>{void action('open_notice',toast);removeToast(toast.key);}}><strong>{toast.title}</strong>{#each toast.lines as line}<span>{line}</span>{/each}</button><button class="toast-close" aria-label="关闭通知" onclick={()=>removeToast(toast.key)}>×</button></article>{/each}</div>
@@ -145,7 +148,7 @@
   <header class="toolbar">
     <!-- 专用拖动区不包含任何按钮，避免窗口拖动抢占控件点击。 -->
     <div class="toolbar-drag" role="presentation" onmousedown={dragToolbar}><span class="app-mark">&gt;_</span><strong>{view==='completed'||demoHistory?'已完成记录':'卡点调度台'}</strong><span class="connection" class:offline={!healthy || !wizard.verified} title={connectionError || connectionLabel}><i></i>{connectionLabel}</span></div>
-    <div class="toolbar-actions">{#if view==='main'&&!demoHistory}<button class="icon-button" class:pressed={pinned} title={pinned?'取消置顶':'置顶'} aria-label={pinned?'取消置顶':'置顶'} onclick={()=>{pinned=!pinned;if(native)void action('pin',pinned);saveWindow();}} aria-pressed={pinned}><Icon name="pin"/></button><div class="menu-anchor"><button class="icon-button" title="更多操作" aria-label="更多操作" aria-expanded={menu} onclick={()=>menu=!menu}><Icon name="more"/></button>{#if menu}<div class="dropdown"><button onclick={settings}>设置</button><button onclick={integration}>Codex 接入</button><hr><button onclick={()=>{if(native)void action('quit');}}>退出看板</button></div>{/if}</div>{/if}</div>
+    <div class="toolbar-actions">{#if view==='main'&&!demoHistory}<button class="icon-button" class:pressed={pinned} title={pinned?'取消置顶':'置顶'} aria-label={pinned?'取消置顶':'置顶'} onclick={()=>{pinned=!pinned;if(native)void action('pin',pinned);saveWindow();}} aria-pressed={pinned}><Icon name="pin"/></button><div class="menu-anchor"><button class="icon-button" title="更多操作" aria-label="更多操作" aria-expanded={menu} onclick={()=>menu=!menu}><Icon name="more"/></button>{#if menu}<div class="dropdown"><button onclick={settings}>设置</button><button onclick={integration}>Codex 接入</button><button onclick={()=>{menu=false;dialog='updates';}}>检查更新</button><hr><button onclick={()=>{if(native)void action('quit');}}>退出看板</button></div>{/if}</div>{/if}</div>
     <div class="window-controls"><button title="最小化" aria-label="最小化" onclick={()=>windowAction('minimize')}><Icon name="minimize" size={14}/></button><button title={maximized?'还原':'最大化'} aria-label={maximized?'还原':'最大化'} onclick={()=>windowAction('toggle_maximize')}><Icon name={maximized?'restore':'maximize'} size={14}/></button><button class="window-close" title="关闭到托盘" aria-label={view==='completed'||demoHistory?'关闭已完成记录':'关闭到托盘'} onclick={closeView}><Icon name="close" size={14}/></button></div>
   </header>
   {#if error || connectionError}<div class="offline-banner" role="status">{error || connectionError}</div>{/if}
@@ -156,16 +159,21 @@
     </aside>{/if}
     {#if current}<TaskDetail task={current} bind:tab {now} completedOnly={view==='completed'||demoHistory} onCompleted={()=>{scopeTask=selected;void openCompleted({scope:current.id});}}/>{:else}<section class="empty detail-empty">{#if loading}正在读取任务{:else if tasks.length&&view==='main'&&!demoHistory}{active.length?'当前筛选下没有任务':'全部任务已完成'}{:else if view==='completed'||demoHistory}暂无已完成记录{:else}<strong>{wizard.title}</strong><button class="primary" onclick={integration}>{connection.state==='missing'?'连接 Codex':'查看连接进度'}</button>{/if}</section>{/if}
   </main>
-  <footer><span>{demo?'隔离演示数据':`共 ${tasks.length} 个任务 · 完成 ${completed.length}`}</span><span class="footer-actions">{#if current}<button onclick={()=>copy(current.session_id)}>复制会话 ID</button>{/if}<small>0.8.1</small></span></footer>
-  {#if dialog}<div class="modal-backdrop"><div use:trapDialog tabindex="-1" class="modal" class:advanced={advanced&&dialog==='integration'} role="dialog" aria-modal="true" aria-label={dialog==='settings'?'看板设置':'Codex 接入'}><div class="modal-title"><strong>{dialog==='settings'?'设置':'Codex 接入'}</strong><button aria-label="关闭设置" disabled={busy || dataBusy} onclick={()=>dialog=null}>×</button></div>
+  <footer><span>{demo?'隔离演示数据':`共 ${tasks.length} 个任务 · 完成 ${completed.length}`}</span><span class="footer-actions">{#if current}<button onclick={()=>copy(current.session_id)}>复制会话 ID</button>{/if}<small>0.9.0</small></span></footer>
+  {#if dialog}<div class="modal-backdrop"><div use:trapDialog tabindex="-1" class="modal" class:advanced={advanced&&dialog==='integration'} role="dialog" aria-modal="true" aria-label={dialog==='settings'?'看板设置':dialog==='updates'?'版本更新':'Codex 接入'}><div class="modal-title"><strong>{dialog==='settings'?'设置':dialog==='updates'?'版本更新':'Codex 接入'}</strong><button aria-label="关闭设置" disabled={busy || dataBusy || updateBusy} onclick={()=>dialog=null}>×</button></div>
     {#if dialog==='settings'}<form onsubmit={e=>{e.preventDefault();void saveSettings();}}><label class="check"><input type="checkbox" bind:checked={draft.auto_start}>开机自启</label><label class="check"><input type="checkbox" bind:checked={draft.show_taskbar}>在任务栏中显示</label><label class="field">主题<select bind:value={draft.theme}><option value="light">白色</option><option value="dark">黑色</option></select></label><label class="check"><input type="checkbox" bind:checked={draft.notifications}>消息浮窗通知</label><label class="field">通知停留<span><input class="seconds" type="number" min="1" max="30" step="1" bind:value={draft.notification_seconds} disabled={!draft.notifications}> 秒</span></label>
       <section class="data-settings" aria-labelledby="data-heading"><div class="data-heading"><strong id="data-heading">数据目录</strong><button type="button" disabled={dataLoading || dataBusy || !native} onclick={()=>windowAction('data_folder')} title="打开当前数据目录"><Icon name="folder" size={14}/> 打开</button></div><p class="data-current">{dataLoading?'正在读取目录…':dataLocation.current || '目录暂不可用'}</p><label class="data-path">迁移到<input type="text" bind:value={dataPath} disabled={dataLoading || dataBusy || !native || dataLocation.restart_required} placeholder="输入新的完整目录路径" oninput={()=>migrateConfirm=false}></label><p class="data-hint">迁移会复制现有数据，重启后会话将重新载入。{migrationWarning}</p>
       {#if migrateConfirm}<div class="confirm-box" role="alert"><strong>确认迁移数据？</strong><p class="data-current">目标：{dataPath.trim()}</p><p>{migrationWarning}</p><label class="check"><input type="checkbox" bind:checked={producersStopped} disabled={dataBusy}>我已退出所有 Codex 会话及其他看板，暂停全部上报</label><div><button type="button" disabled={dataBusy} onclick={()=>migrateConfirm=false}>取消</button><button type="button" class="primary" disabled={dataBusy || !producersStopped} onclick={migrateData}>{dataBusy?'迁移中…':'确认迁移'}</button></div></div>{:else}<div class="data-actions"><button type="button" disabled={dataLoading || dataBusy || !native || !dataPath.trim() || dataPath.trim()===dataLocation.current || dataLocation.restart_required} onclick={()=>migrateConfirm=true}>迁移数据…</button>{#if dataLocation.restart_required}<button type="button" class="primary" disabled={dataBusy} onclick={()=>windowAction('restart')}>重启并使用新目录</button>{/if}</div>{/if}<div class="form-note" role="status">{dataNote}</div></section>
-      <div class="form-note" role="status">{note}</div><div class="modal-actions"><button type="button" onclick={testNotice}>测试通知</button><span></span><button type="button" disabled={busy || dataBusy} onclick={()=>dialog=null}>取消</button><button class="primary" disabled={busy || dataBusy || dataLocation.restart_required} title={dataLocation.restart_required?'请先重启看板后再保存设置':undefined} type="submit">{busy?'保存中…':'保存'}</button></div></form>
+      {#if view==='main'}<Updates visible compact blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}
+      <div class="form-note" role="status">{note}</div><div class="modal-actions"><button type="button" onclick={testNotice}>测试通知</button><span></span><button type="button" disabled={busy || dataBusy || updateBusy} onclick={()=>dialog=null}>取消</button><button class="primary" disabled={busy || dataBusy || updateBusy || dataLocation.restart_required} title={dataLocation.restart_required?'请先重启看板后再保存设置':undefined} type="submit">{busy?'保存中…':'保存'}</button></div></form>
+    {:else if dialog==='updates'}
+      {#if view==='main'}<Updates visible blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}
+      <div class="modal-actions"><span></span><button type="button" disabled={updateBusy} onclick={()=>dialog=null}>关闭</button></div>
     {:else}
       <ol class="connection-steps" aria-label="接入进度">{#each ['准备连接','Codex 载入','验证同步'] as label,index}<li class:finished={wizard.stage>index} class:current={wizard.stage===index} aria-current={wizard.stage===index?'step':undefined}><span>{wizard.stage>index?'✓':index+1}</span>{label}</li>{/each}</ol>
       <div class="integration-status" role="status"><span class="integration-icon" class:ready={wizard.verified}>{wizard.verified?'✓':'○'}</span><div><strong>{busy?'正在处理…':wizard.title}</strong><p>{wizard.description}</p></div></div>
       {#if connectionError}<div class="form-note" role="alert">{connectionError}</div>{/if}
+      {#if connection.runtime_update_available}<section class="confirm-box" aria-label="可选连接组件升级"><p>看板已更新，当前 Codex 连接仍使用旧组件；可在方便时升级，不会结束当前会话。</p><div><button disabled={busy || recoveryConfirm || connection.state==='conflict' || connection.state==='recovery_required'} onclick={()=>runConnect(false)}>升级连接组件</button></div></section>{/if}
       {#if recoveryConfirm}<section class="confirm-box recovery-confirm" aria-label="确认恢复旧版连接"><strong>恢复前请确认配置预览</strong><p>只恢复识别为本工具的旧版连接，并安装当前用户级连接程序。陌生配置不会覆盖；取消不会更改任何配置。</p>{#if recoveryPreviewReady}<div class="diff-list">{#each changes as change}<details open><summary>{change.title}<small>{change.key}</small></summary><div class="diff-summary"><span>当前：{change.before}</span><span>恢复后：{change.after}</span></div><pre>{change.diff}</pre></details>{/each}{#if !changes.length}<p>未返回可确认的配置差异，请稍后检查或查看高级诊断。</p>{/if}</div>{/if}<div><button disabled={busy} onclick={()=>recoveryConfirm=false}>取消恢复</button><button class="primary" disabled={busy || !recoveryPreviewReady || !changes.length} onclick={()=>runConnect(false,true)}>{busy?'正在检查…':'确认恢复并连接'}</button></div></section>
       {:else}<div class="integration-actions"><button class="primary" disabled={busy} onclick={integrationNext}>{busy?'正在处理…':wizard.button}</button></div>{/if}
       <div class="form-note" role="status">{note}</div>

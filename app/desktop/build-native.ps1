@@ -1,5 +1,9 @@
 param([ValidateSet('check','release','test-core','reporter')][string]$Phase = 'release')
 $ErrorActionPreference = 'Stop'
+# Public trust anchor is source-controlled; the private key is never a build input.
+$taskPublicKey = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'update-public-key.txt') -Raw).Trim()
+if ($env:FLOATBOARD_UPDATE_PUBLIC_KEY -and $env:FLOATBOARD_UPDATE_PUBLIC_KEY -ne $taskPublicKey) { throw 'Update public key differs from pinned release key' }
+$env:FLOATBOARD_UPDATE_PUBLIC_KEY = $taskPublicKey
 $taskRoot = Split-Path $PSScriptRoot
 $taskVc = (Get-ChildItem (Join-Path $taskRoot 'build/local-msvc/VC/Tools/MSVC') -Directory | Select-Object -First 1).FullName
 $taskSdk = 'C:\Program Files (x86)\Windows Kits\10'
@@ -19,5 +23,5 @@ Write-Output "Cargo target: $taskTarget"
 if ($Phase -eq 'test-core') { & cargo test --manifest-path reporter/Cargo.toml --locked }
 elseif ($Phase -eq 'reporter') { & cargo build --manifest-path reporter/Cargo.toml --release --locked }
 elseif ($Phase -eq 'check') { & cargo check --manifest-path src-tauri/Cargo.toml --locked }
-else { & pnpm tauri build --no-bundle }
+else { & node (Join-Path $PSScriptRoot 'node_modules/@tauri-apps/cli/tauri.js') build --no-bundle '--' --locked }
 if ($LASTEXITCODE -ne 0) { throw "原生 $Phase 失败" }

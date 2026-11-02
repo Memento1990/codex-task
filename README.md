@@ -50,25 +50,32 @@
 
 ### 1. 下载并启动
 
-当前源码为 **0.8.1**，重构了普通用户接入流程；版本内容与发布状态见 [0.8.1 说明](docs/releases/v0.8.1.md)。0.8.0 为未单独发布的候选版，其窗口、迁移和通知功能已包含在新版中。
+当前版本为 **0.9.0**，增加GitHub Release签名更新；版本内容见[0.9.0说明](docs/releases/v0.9.0.md)，设计、配置与维护流程见[自动更新说明](docs/automatic-updates.md)。从0.8.1升级需先手动下载一次新版便携包，之后可在应用内检查、下载并确认安装更新。
 
-从 [Releases](https://github.com/Memento1990/codex-task/releases/latest) 下载 `CodexFloatboard-0.8.1-windows-x64.zip`，完整解压后运行：
+从 [Releases](https://github.com/Memento1990/codex-task/releases/latest) 下载 `CodexFloatboard-0.9.0-windows-x64.zip`，完整解压后运行：
 
 ```text
 CodexFloatboard/
 ├── CodexFloatboard.exe
-├── FloatboardReporter.exe
+├── FloatboardUpdater.exe
+├── current.json
 ├── README.txt
-├── THIRD-PARTY-NOTICES.txt
-└── LICENSE
+└── versions/
+    └── 0.9.0/
+        ├── CodexFloatboard.exe
+        ├── FloatboardReporter.exe
+        ├── FloatboardUpdater.exe
+        ├── README.txt
+        ├── THIRD-PARTY-NOTICES.txt
+        └── LICENSE
 ```
 
-两个 EXE 必须放在同一目录。使用阶段不需要安装 Node.js、Python 或 Rust；系统需要 Microsoft Edge WebView2 Runtime 和 Microsoft Visual C++ x64 运行库。当前便携包未签名，无安装器。
+保持完整目录结构，运行根目录的固定启动入口，不要直接为versions里的GUI建立快捷方式。使用阶段不需要安装 Node.js、Python 或 Rust；系统需要 Microsoft Edge WebView2 Runtime 和 Microsoft Visual C++ x64 运行库。更新清单已使用Ed25519签名；Windows EXE尚无Authenticode代码签名，无安装器。
 
 可使用下载页的 `SHA256SUMS.txt` 核对 ZIP：
 
 ```powershell
-Get-FileHash .\CodexFloatboard-0.8.1-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\CodexFloatboard-0.9.0-windows-x64.zip -Algorithm SHA256
 ```
 
 ### 2. 连接 Codex

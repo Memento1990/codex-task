@@ -7,7 +7,23 @@ use floatboard_core::desktop::Engine;
 
 #[derive(Default)]
 struct ToastQueue { ready: bool, pending: Vec<Value> }
-struct State { engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue> }
+struct State { engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue>, updates: Arc<floatboard_core::update::UpdateService> }
+
+#[tauri::command]
+async fn update_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, action:String, params:Value)->Result<Value,String>{
+    if window.label()!="main"{return Err("此窗口不能更新应用".into());}
+    if action=="install"{
+        if params["confirmed"]!=true{return Err("请确认重启看板后更新".into());}
+        let root={let engine=state.engine.lock().map_err(|_|"本地状态异常")?;if engine.data_location()["restart_required"]==true{return Err("数据目录已迁移，请先重启看板再更新".into());}engine.root.clone()};
+        let service=state.updates.clone();let failed=service.clone();
+        let result=tauri::async_runtime::spawn_blocking(move||floatboard_core::update_install::prepare(&service,&root)).await.map_err(|_|"更新准备中断")?;
+        if let Err(error)=result{failed.install_failed(&error);return Err(error);}
+        app.exit(0);return Ok(json!({"state":"installing"}));
+    }
+    let service=state.updates.clone();
+    if action=="check"||action=="download"{let snapshot=service.snapshot();tauri::async_runtime::spawn_blocking(move||{let _=if action=="check"{service.check()}else{service.download()};});return Ok(snapshot);}
+    tauri::async_runtime::spawn_blocking(move||match action.as_str(){"snapshot"=>Ok(service.snapshot()),"cancel"=>service.cancel(),"preferences"=>service.preferences(&params),_=>Err("未知更新操作".into())}).await.map_err(|_|"更新操作中断")?
+}
 
 fn show_main(app:&tauri::AppHandle) { if let Some(w)=app.get_webview_window("main") { let _=w.show(); let _=w.unminimize(); let _=w.set_focus(); } }
 
@@ -26,6 +42,7 @@ async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::
         if !result["notifications"].as_bool().unwrap_or(true) { if let Some(w)=app.get_webview_window("toast") { let _=w.emit("host-event",json!({"type":"clear"})); let _=w.hide(); } }
         let _=app.emit("host-event",json!({"type":"options","options":result}));
     }
+    if method=="snapshot" && window.label()=="main"{let _=floatboard_core::update_install::acknowledge();}
     Ok(result)
 }
 
@@ -102,6 +119,7 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
 }
 
 pub fn run() {
+    if floatboard_core::update_install::startup_gate().is_err(){return;}
     let root=floatboard_core::data_root();
     // Explicit isolated acceptance runs must not activate the user's live GUI.
     // Normal launches retain the single-instance behavior.
@@ -116,7 +134,9 @@ pub fn run() {
     let stored=adapter.call("window_load",json!({})).unwrap_or(json!({}));
     let options=floatboard_core::desktop::load_options(&root);
     let worker=Arc::new(Mutex::new(adapter));
-    app.manage(State{engine:worker.clone(),toasts:Mutex::new(ToastQueue::default())});
+    let updates=floatboard_core::update::UpdateService::new(root.clone());
+    let scheduled=updates.clone();std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(20));loop{if scheduled.snapshot()["preferences"]["auto_check"]==true{let _=scheduled.check();}std::thread::sleep(std::time::Duration::from_secs(6*60*60));}});
+    app.manage(State{engine:worker.clone(),toasts:Mutex::new(ToastQueue::default()),updates});
 
             let width=stored["width"].as_f64().unwrap_or(772.).max(392.);
             let height=stored["height"].as_f64().unwrap_or(570.).max(570.);
@@ -156,6 +176,6 @@ pub fn run() {
                 if let (Ok(size),Ok(position),Ok(scale))=(w.inner_size(),w.outer_position(),w.scale_factor()) {let state=w.state::<State>();let params=json!({"width":size.width as f64/scale,"height":size.height as f64/scale,"x":position.x as f64/scale,"y":position.y as f64/scale});let engine=state.engine.clone();tauri::async_runtime::spawn_blocking(move||{if let Ok(mut adapter)=engine.lock(){let _=adapter.call("window_save",params);}});}
             }
         })
-        .invoke_handler(tauri::generate_handler![bridge,host_action])
+        .invoke_handler(tauri::generate_handler![bridge,host_action,update_action])
         .run(tauri::generate_context!()).expect("看板运行失败");
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+import { safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
 test('human elapsed freezes completed timers and distinguishes unknown',()=>{
   assert.equal(elapsed(null,100),'起点未记录');
   assert.equal(elapsed({started_at:null,ended_at:null,seconds:0,since:null,partial:false},100),'未开始');
@@ -33,6 +33,9 @@ test('historical hooks and local config do not imply a verified current connecti
   assert.equal(connectionStatus({state:'session_received',hook_seen:true}),'已收到当前会话');
   assert.equal(connectionStatus({state:'sync_verified'}),'同步已验证');
   assert.equal(integrationStep({state:'sync_verified'}).verified,true);
+  assert.equal(integrationStep({state:'sync_verified',runtime_update_available:true}).verified,true);
+  assert.equal(integrationStep({state:'sync_verified',runtime_update_available:true}).action,'done');
+  assert.equal(connectionStatus({state:'sync_verified',runtime_update_available:true}),'同步已验证');
 });
 test('wizard provides one safe next action for each connection phase',()=>{
   assert.equal(integrationStep({state:'missing'}).action,'connect');
@@ -47,6 +50,30 @@ test('diagnostics preserve strings, arrays and structured details',()=>{
   assert.equal(diagnosticText(undefined),'');
   assert.equal(diagnosticText(['waiting','collector unavailable']),'waiting\ncollector unavailable');
   assert.match(diagnosticText({state:'pending'}),/pending/);
+});
+const update:UpdateSnapshot={current_version:'0.9.0',state:'idle',supported:true,downloaded_bytes:0,preferences:{auto_check:true,auto_download:true}};
+test('update states have one safe primary action and never install automatically',()=>{
+  assert.equal(updatePresentation({...update,state:'available'}).action,'download');
+  assert.equal(updatePresentation({...update,state:'ready'}).action,'install');
+  for(const state of ['checking','downloading','installing'])assert.equal(updatePresentation({...update,state}).action,null);
+  assert.equal(updatePresentation({...update,state:'future'}).action,'check');
+  assert.equal(updatePresentation({...update,state:'ready',supported:false}).action,null);
+  assert.match(updatePresentation({...update,state:'unsupported'}).description,/签名/);
+  assert.match(updatePresentation({...update,state:'ready'}).description,/不会结束 Codex/);
+});
+test('download progress handles unknown totals and clamps malformed values',()=>{
+  assert.equal(updateProgress(10,null),null);
+  assert.equal(updateProgress(10,0),null);
+  assert.equal(updateProgress(10,NaN),null);
+  assert.equal(updateProgress(25,100),25);
+  assert.equal(updateProgress(200,100),100);
+  assert.equal(updateProgress(-10,100),0);
+  assert.equal(updateBytes(1048576),'1.0 MB');
+  assert.equal(updateBytes(NaN),'0 B');
+});
+test('update links are restricted to official GitHub releases',()=>{
+  assert.equal(safeUpdateUrl('https://github.com/Memento1990/codex-task/releases/latest'),true);
+  for(const url of ['http://github.com/Memento1990/codex-task/releases/latest','https://github.com/other/repo/releases','https://github.com/Memento1990/codex-task/releases-evil','https://github.com.evil.test/Memento1990/codex-task/releases','https://user@github.com/Memento1990/codex-task/releases','javascript:alert(1)'])assert.equal(safeUpdateUrl(url),false);
 });
 test('evidence references reject executable schemes, credentials and UNC',()=>{
   assert.equal(safeReference('https://example.test/a'),true);

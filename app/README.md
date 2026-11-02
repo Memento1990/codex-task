@@ -1,11 +1,11 @@
 # Codex Task · 应用源码
 
-当前源码版本为 **0.8.1**，Windows 桌面实现使用 Tauri 2 + Svelte + Rust。
+当前源码版本为 **0.9.0**，Windows 桌面实现使用 Tauri 2 + Svelte + Rust。
 
 - [项目介绍、截图、下载与接入](../README.md)
 - [构建与验证](../README.md#源码构建)
-- [当前版本说明](../docs/releases/v0.8.1.md)
-- [公开发行验证](../docs/releases/v0.8.1-validation.md)
+- [当前版本说明](../docs/releases/v0.9.0.md)
+- [公开发行验证](../docs/releases/v0.9.0-validation.md)
 - [历史变更](CHANGELOG.md)
 
 ## 源码边界
@@ -20,7 +20,7 @@
 
 ## 本机产物与编译缓存
 
-- 根目录 `releases/v0.8.1` 为新发布运行包；根目录启动脚本启动0.8.1。旧 `releases/v0.7.0` 和 `releases/v0.8.0-candidate` 暂时保留供活动旧进程使用，不会强制结束它们。
+- 根目录 `releases/v0.9.0` 为新发布运行包；根目录启动脚本启动0.9.0。旧 `releases/v0.7.0` 和 `releases/v0.8.0-candidate` 暂时保留供活动旧进程使用，不会强制结束它们。
 - 旧 Python dist、PyInstaller 构建缓存及 `app/releases` 的重复发行目录已清理；`build/local-msvc` 工具链保留，历史原生验收资料归档到仓库外。
 - 项目内两个 Rust `target` 目录可安全回收（先停止构建及使用其中程序的测试进程）。首次重新构建需要重新编译。
 - Cargo 默认已在用户级 `CARGO_HOME` 共享下载的依赖源码；`CARGO_TARGET_DIR` 可把构建产物放到外部公共目录，但工具链、profile、features、依赖版本和参数不同仍会产生不同产物，多项目也可能竞争构建锁。更精细的跨项目编译复用可另行配置 `sccache`。

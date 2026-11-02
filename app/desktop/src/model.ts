@@ -4,7 +4,7 @@ export type Blocker = { id: string; title: string; open: boolean; reason: string
 export type Task = { id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: { label: string; reference: string }[]; history: { kind: string; at: number; tool: string; status: string; agent_id: string }[]; timing?: Timer };
 export type Options = { auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
 export type Notice = { task_id: string; title: string; lines: string[]; tab: number };
-export type Connection = { state: string; config_state?: string; error?: string; diagnostics?: unknown; recovery_required?: boolean; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean; mcp_connected?: boolean };
+export type Connection = { state: string; config_state?: string; error?: string; diagnostics?: unknown; recovery_required?: boolean; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean; runtime_update_available?: boolean; mcp_connected?: boolean };
 export type IntegrationStep = { title:string; description:string; action:'connect'|'recover'|'check'|'details'|'done'; button:string; stage:number; verified:boolean };
 export function integrationStep(connection: Connection): IntegrationStep {
   const step=(title:string,description:string,action:IntegrationStep['action'],button:string,stage:number,verified=false):IntegrationStep=>({title,description,action,button,stage,verified});
@@ -25,6 +25,32 @@ export function connectionStatus(connection: Connection): string {
 }
 export type Snapshot = { tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
 export type DataLocation = { current: string; restart_required: boolean };
+export type UpdateSnapshot = {current_version:string;state:string;latest_version?:string|null;release_notes?:string|null;release_url?:string|null;downloaded_bytes:number;total_bytes?:number|null;error?:string|null;last_checked?:number|null;preferences:{auto_check:boolean;auto_download:boolean};supported:boolean;installation_result?:{status?:string;version?:string;message?:string}|null};
+export function updatePresentation(update:UpdateSnapshot):{title:string;description:string;action:'check'|'download'|'install'|null;button:string} {
+  if(!update.supported || update.state==='unsupported')return {title:'当前安装方式暂不支持自动更新',description:'当前构建未配置可用的更新签名或安装方式不受支持，无法安全自动更新。可继续使用当前版本，或查看官方发布页面。',action:null,button:''};
+  switch(update.state){
+    case 'checking':return {title:'正在检查更新',description:'正在获取版本信息，不会影响 Codex 任务。',action:null,button:'检查中…'};
+    case 'up_to_date':return {title:'当前已是最新版本',description:'最近一次检查未发现更高版本。',action:'check',button:'重新检查'};
+    case 'available':return {title:'发现可用更新',description:'下载完成后仍需你确认安装，不会自动重启看板。',action:'download',button:'下载更新'};
+    case 'downloading':return {title:'正在下载更新',description:'可以关闭此面板，下载会在后台继续。',action:null,button:'下载中…'};
+    case 'ready':return {title:'更新已准备就绪',description:'确认后安装并重启看板，不会结束 Codex 或正在进行的任务。',action:'install',button:'安装并重启…'};
+    case 'installing':return {title:'正在安装更新',description:'看板可能暂时关闭，请勿重复启动安装。Codex 不会被结束。',action:null,button:'安装中…'};
+    case 'error':return {title:'暂时无法完成更新',description:'当前版本仍可继续使用。可以稍后重试。',action:'check',button:'重新检查'};
+    case 'idle':return {title:'检查可用更新',description:'后台检查和下载由看板管理，安装前始终征求确认。',action:'check',button:'检查更新'};
+    default:return {title:'更新状态待确认',description:'暂不执行下载或安装，请重新检查版本信息。',action:'check',button:'检查更新'};
+  }
+}
+export function updateProgress(downloaded:number,total?:number|null):number|null {
+  if(!Number.isFinite(total) || !total || total<=0)return null;
+  return Math.min(100,Math.max(0,Math.floor((Number.isFinite(downloaded)?downloaded:0)/total*100)));
+}
+export function updateBytes(bytes:number):string {
+  if(!Number.isFinite(bytes)||bytes<0)return '0 B';
+  return bytes>=1048576?`${(bytes/1048576).toFixed(1)} MB`:bytes>=1024?`${(bytes/1024).toFixed(1)} KB`:`${Math.floor(bytes)} B`;
+}
+export function safeUpdateUrl(value:string|undefined|null):boolean {
+  try{const url=new URL(value || '');return url.protocol==='https:'&&url.hostname==='github.com'&&!url.port&&!url.username&&!url.password&&/^\/Memento1990\/codex-task\/releases(?:\/|$)/i.test(url.pathname);}catch{return false;}
+}
 export function createTestNoticeFactory() {
   let sequence = 0;
   return (options: Options): Notice & {seconds:number;theme:string} => ({task_id:`settings-preview-${++sequence}`,title:'消息通知预览',lines:['任务或清单变化时，在这里提醒。'],tab:0,seconds:options.notification_seconds,theme:options.theme});

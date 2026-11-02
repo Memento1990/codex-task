@@ -92,7 +92,11 @@ pub fn decorate_connection(root:&Path,mut state:Value)->Value{
     if state["hook_error"]==true {state["state"]=json!("error");return state;}
     let receipt=read_json(&receipt_path(root)).unwrap_or(json!({}));
     let generation=generation(root);let since=receipt["connected_at"].as_f64().unwrap_or(f64::INFINITY);
-    let fresh=|kind:&str|->Option<Value>{read_json(&root.join(format!("connection-{kind}.json"))).ok().filter(|v|!generation.is_empty()&&v["generation"]==generation&&v["version"]==env!("CARGO_PKG_VERSION")&&v["at"].as_f64().is_some_and(|at|at>=since&&at<=crate::now()+5.))};
+    // GUI updates do not replace active Codex clients. Evidence belongs to the
+    // explicitly connected Reporter version, not the newly installed GUI version.
+    let connected_version=receipt["reporter_version"].as_str().unwrap_or(env!("CARGO_PKG_VERSION"));
+    state["runtime_update_available"]=json!(connected_version!=env!("CARGO_PKG_VERSION"));
+    let fresh=|kind:&str|->Option<Value>{read_json(&root.join(format!("connection-{kind}.json"))).ok().filter(|v|!generation.is_empty()&&v["generation"]==generation&&v["version"]==connected_version&&v["at"].as_f64().is_some_and(|at|at>=since&&at<=crate::now()+5.))};
     let mcp=fresh("mcp");let hook=fresh("hook");let report=fresh("report");let consumed=fresh("consumed");
     state["mcp_connected"]=json!(mcp.is_some());state["hook_seen"]=json!(hook.is_some());
     state["diagnostics"]=json!(if state["upgrade_available"]==true{vec!["发现旧版连接，可在高级选项升级；不会结束当前 Codex 会话。"]}else if hook.is_some(){vec!["已收到当前连接的会话事件；任务汇报入库后才完成同步验证。"]}else if mcp.is_some(){vec!["当前连接组件已由 Codex 初始化，等待真实会话事件。"]}else{vec!["配置就绪不代表 Codex 已载入。请按原生提示确认信任，方便时重载或完整重启 Codex。"]});

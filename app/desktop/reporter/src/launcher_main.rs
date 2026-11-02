@@ -1,0 +1,2 @@
+#![windows_subsystem = "windows"]
+fn main(){if floatboard_core::build_identity::handle(){return;}if let Err(error)=floatboard_core::update_install::launch(){let text:Vec<u16>=format!("看板未启动：{error}").encode_utf16().chain(Some(0)).collect();let title:Vec<u16>="Codex Floatboard".encode_utf16().chain(Some(0)).collect();unsafe{windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(std::ptr::null_mut(),text.as_ptr(),title.as_ptr(),windows_sys::Win32::UI::WindowsAndMessaging::MB_OK|windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONERROR);}std::process::exit(1);}}

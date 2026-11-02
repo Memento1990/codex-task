@@ -57,7 +57,7 @@ mod tests {
     }
 }
 pub fn save_options(root:&Path,gui:&Path,value:&Value)->Result<Value>{
-    let previous=load_options(root);let mut out=validate_options(value)?;let desired=integration::command_line(&[gui.to_string_lossy().into_owned(),"--data-dir".into(),root.to_string_lossy().into_owned()]);
+    let previous=load_options(root);let mut out=validate_options(value)?;let desired=integration::command_line(&[crate::update_install::launch_entry(gui).to_string_lossy().into_owned(),"--data-dir".into(),root.to_string_lossy().into_owned()]);
     let changed=out["auto_start"]!=previous["auto_start"]||out["auto_start"]==true&&previous["startup_command"]!=desired;
     let old=if changed{startup(out["auto_start"]==true,&desired,previous["startup_command"].as_str().unwrap_or(""))?}else{None};
     out["startup_command"]=json!(if out["auto_start"]==true{desired.clone()}else{String::new()});

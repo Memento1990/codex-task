@@ -2,6 +2,15 @@
 
 本项目使用语义化版本号。GitHub 首次公开发布为 `v0.7.0`，此前版本为本机开发版本。
 
+## [0.9.0] - 2026-11-02
+
+- 新增GitHub稳定版检查、默认自动下载、明确确认安装与更新偏好。
+- Ed25519签名清单、固定官方仓库、限流时官方签名文件fallback，不要求用户Token。
+- 独立Rust更新器与固定启动器，版本化部署、准备握手、启动门闩、健康确认及回滚。
+- 下载缓存内容寻址、重启复验恢复与离线保留可安装状态。
+- 只升级GUI时保持兼容Codex运行时证据，明确提供连接组件可选升级。
+- 发布工具核验各EXE真实版本、公钥与协议，生产私钥仓库外受保护保存。
+
 ## [0.8.1] - 2026-11-02
 
 ### Codex 接入重构
@@ -65,5 +74,6 @@
 
 完整说明见 [v0.7.0](docs/releases/v0.7.0.md)。早期本机版本记录保留在 [app/CHANGELOG.md](app/CHANGELOG.md)。
 
+[0.9.0]: https://github.com/Memento1990/codex-task/releases/tag/v0.9.0
 [0.8.1]: https://github.com/Memento1990/codex-task/releases/tag/v0.8.1
 [0.7.0]: https://github.com/Memento1990/codex-task/releases/tag/v0.7.0

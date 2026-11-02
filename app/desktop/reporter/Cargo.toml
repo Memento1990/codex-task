@@ -1,6 +1,6 @@
 [package]
 name = "floatboard-core"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2021"
 
 [dependencies]
@@ -12,8 +12,26 @@ regex = "=1.13.1"
 uuid = { version = "=1.29.0", features = ["v4"] }
 toml_edit = { version = "=0.25.13", features = ["serde"] }
 winreg = "=0.56.0"
-windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "system-proxy"] }
+ed25519-dalek = "2"
+base64 = "0.22"
+semver = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+rand = "0.8"
 
 [[bin]]
 name = "FloatboardReporter"
 path = "src/main.rs"
+
+[[bin]]
+name = "FloatboardUpdater"
+path = "src/updater_main.rs"
+
+[[bin]]
+name = "FloatboardLauncher"
+path = "src/launcher_main.rs"
+
+[[bin]]
+name = "FloatboardRelease"
+path = "src/update_release.rs"
