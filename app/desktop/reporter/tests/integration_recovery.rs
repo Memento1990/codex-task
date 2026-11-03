@@ -58,7 +58,7 @@ fn installed(temp:&Temp){fs::write(temp.home().join("config.toml"),"# keep\nmode
 #[test]fn mcp_tool_hooks_use_event_templates_and_session_end_keeps_command(){
  let t=Temp::new();let bridge=t.0.join("FloatboardBridge.exe");let c=api::contribution(&t.data(),&bridge);
  assert_eq!(c["mcp"]["tools"]["hook_context"]["approval_mode"],"approve");
- for event in api::HOOKS {let hook=api::desired_hook(&c,event);let item=&hook["hooks"][0];if event=="SessionEnd"{assert_eq!(item["type"],"command");}else{assert_eq!(item["type"],"mcp_tool");assert_eq!(item["input"]["hook_event_name"],event);assert_eq!(item["input"]["session_id"],"${session_id}");}}
+ for event in api::HOOKS {let hook=api::desired_hook(&c,event);let item=&hook["hooks"][0];if event=="SessionEnd"{assert_eq!(item["type"],"command");assert_eq!(item["timeout"],3);}else{assert_eq!(item["timeout"],5);assert_eq!(item["type"],"mcp_tool");assert_eq!(item["input"]["hook_event_name"],event);assert_eq!(item["input"]["session_id"],"${session_id}");}}
  let p=api::preview_at(&t.data(),&t.home(),&bridge,false).unwrap();api::apply(&t.data(),&p).unwrap();let p=api::preview_at(&t.data(),&t.home(),&bridge,false).unwrap();assert!(!p.changed);assert_eq!(p.present,10);
  let p=api::preview_at(&t.data(),&t.home(),&bridge,true).unwrap();api::apply(&t.data(),&p).unwrap();assert!(!String::from_utf8(config(&t.home())).unwrap().contains("codex_floatboard"));
 }
@@ -76,4 +76,69 @@ fn installed(temp:&Temp){fs::write(temp.home().join("config.toml"),"# keep\nmode
 #[test]fn missing_receipt_old_commands_recover_directly_to_mixed_bridge(){
  let t=Temp::new();installed(&t);fs::remove_file(api::receipt_path(&t.data())).unwrap();let bridge=t.0.join("FloatboardBridge.exe");let p=api::preview_at_with_recovery(&t.data(),&t.home(),&bridge,false,true).unwrap();assert!(p.recovery_required);api::apply(&t.data(),&p).unwrap();let p=api::preview_at(&t.data(),&t.home(),&bridge,false).unwrap();assert!(!p.changed);assert_eq!(p.present,10);
 }
+#[test]fn session_end_5s_receipt_upgrades_only_owned_hook_and_can_disconnect(){
+ for receipt_present in [true,false]{
+  let t=Temp::new();let reporter=t.exe("old");installed(&t);
+  let mut receipt=store::read_json(&api::receipt_path(&t.data())).unwrap();
+  let mut old=receipt["contribution"].clone();old["hooks_by_event"].as_object_mut().unwrap().remove("SessionEnd");
+  // Exact pre-fix command-route contribution and configuration, not a loose
+  // timeout substitution: unknown fields and third-party hooks stay protected.
+  let mut parsed:Value=toml_edit::de::from_str(&String::from_utf8(config(&t.home())).unwrap()).unwrap();parsed["hooks"]["SessionEnd"]=json!([old["hook"].clone(),{"hooks":[{"type":"command","command":"third-party","timeout":2}]}]);
+  fs::write(t.home().join("config.toml"),toml_edit::ser::to_string_pretty(&parsed).unwrap()).unwrap();
+  receipt["contribution"]=old;receipt["after_hash"]=json!(hash(&config(&t.home())));store::atomic_json(&api::receipt_path(&t.data()),&receipt).unwrap();
+  if !receipt_present{fs::remove_file(api::receipt_path(&t.data())).unwrap();}
+  let p=api::preview_at_with_recovery(&t.data(),&t.home(),&reporter,false,true).unwrap();assert_eq!(p.recovery_required,!receipt_present);assert_eq!(p.changes.len(),1);assert_eq!(p.changes[0]["key"],"hooks.SessionEnd");
+  api::apply(&t.data(),&p).unwrap();let parsed:Value=toml_edit::de::from_str(&String::from_utf8(config(&t.home())).unwrap()).unwrap();assert_eq!(parsed["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"],2);assert_eq!(parsed["hooks"]["SessionEnd"][1]["hooks"][0]["timeout"],3);
+  assert!(!api::preview_at(&t.data(),&t.home(),&reporter,false).unwrap().changed);
+  let p=api::preview_at(&t.data(),&t.home(),&reporter,true).unwrap();api::apply(&t.data(),&p).unwrap();let parsed:Value=toml_edit::de::from_str(&String::from_utf8(config(&t.home())).unwrap()).unwrap();assert_eq!(parsed["hooks"]["SessionEnd"].as_array().unwrap().len(),1);assert_eq!(parsed["hooks"]["SessionEnd"][0]["hooks"][0]["command"],"third-party");
+ }
+}
+#[test]fn mixed_bridge_5s_receipt_updates_only_session_end(){
+ let t=Temp::new();let bridge=t.0.join("FloatboardBridge.exe");let mut old=api::contribution(&t.data(),&bridge);old["hooks_by_event"].as_object_mut().unwrap().remove("SessionEnd");
+ let mut hooks=serde_json::Map::new();for event in api::HOOKS{hooks.insert(event.into(),json!([api::desired_hook(&old,event)]));}
+ let parsed=json!({"model":"keep-me","mcp_servers":{"codex_floatboard":old["mcp"]},"hooks":hooks});fs::write(t.home().join("config.toml"),toml_edit::ser::to_string_pretty(&parsed).unwrap()).unwrap();
+ store::atomic_json(&api::receipt_path(&t.data()),&json!({"home":t.home(),"status":"applied","contribution":old})).unwrap();
+ let p=api::preview_at(&t.data(),&t.home(),&bridge,false).unwrap();assert_eq!(p.changes.len(),1);assert_eq!(p.changes[0]["key"],"hooks.SessionEnd");api::apply(&t.data(),&p).unwrap();
+ let after:Value=toml_edit::de::from_str(&String::from_utf8(config(&t.home())).unwrap()).unwrap();assert_eq!(after["model"],"keep-me");for event in api::HOOKS{assert_eq!(after["hooks"][event][0]["hooks"][0]["timeout"],if event=="SessionEnd"{3}else{5});}assert!(!api::preview_at(&t.data(),&t.home(),&bridge,false).unwrap().changed);
+}
 #[test]fn stable_bridge_contribution_does_not_embed_data_location(){let t=Temp::new();let c=api::contribution(&t.data(),&t.0.join("FloatboardBridge.exe"));assert_eq!(c["mcp"]["args"],json!(["--mcp"]));assert!(!c["hook"].to_string().contains("--data-dir"));}
+
+fn parsed_config(home:&Path)->Value{toml_edit::de::from_str(&String::from_utf8(config(home)).unwrap()).unwrap()}
+#[test]fn namespace_is_an_exact_case_insensitive_root_component(){
+ assert_eq!(api::server_name(Path::new("C:/fixtures/cOdExFlOaTbOaRd-DeV/shared-local/data")),"codex_floatboard_dev");
+ for root in ["C:/fixtures/CodexFloatboard/data","C:/fixtures/CodexFloatboard-Dev-old/data","C:/fixtures/prefix-CodexFloatboard-Dev/data"]{assert_eq!(api::server_name(Path::new(root)),"codex_floatboard");}
+}
+#[test]fn dev_and_formal_share_home_without_sharing_ownership(){
+ for bridge in [false,true]{
+  let t=Temp::new();fs::write(t.home().join("config.toml"),"# keep\nmodel='preserved'\n").unwrap();
+  let dev=t.0.join("CodexFloatboard-Dev/shared-local/data");
+  let formal_exe=if bridge{t.0.join("formal/runtime/FloatboardBridge.exe")}else{t.exe("formal")};
+  let dev_exe=if bridge{dev.join("runtime/FloatboardBridge.exe")}else{dev.join("FloatboardReporter.exe")};
+  let p=api::preview_at(&t.data(),&t.home(),&formal_exe,false).unwrap();api::apply(&t.data(),&p).unwrap();
+  let formal_bytes=config(&t.home());let formal=parsed_config(&t.home());let receipt=fs::read(api::receipt_path(&t.data())).unwrap();
+  let p=api::preview_at(&dev,&t.home(),&dev_exe,false).unwrap();assert!(!p.recovery_required);assert_eq!(p.present,0);assert_eq!(p.changes[0]["key"],"mcp_servers.codex_floatboard_dev");api::apply(&dev,&p).unwrap();
+  let both=parsed_config(&t.home());assert_eq!(both["mcp_servers"]["codex_floatboard"],formal["mcp_servers"]["codex_floatboard"]);
+  for event in api::HOOKS{assert_eq!(both["hooks"][event][0],formal["hooks"][event][0]);assert_eq!(both["hooks"][event].as_array().unwrap().len(),2);if bridge&&event!="SessionEnd"{assert_eq!(both["hooks"][event][1]["hooks"][0]["server"],"codex_floatboard_dev");}}
+  assert_eq!(fs::read(api::receipt_path(&t.data())).unwrap(),receipt);
+  let bytes=config(&t.home());let p=api::preview_at(&dev,&t.home(),&dev_exe,false).unwrap();assert!(!p.changed);assert_eq!(p.present,10);assert!(!api::apply(&dev,&p).unwrap());assert_eq!(bytes,config(&t.home()));
+  let p=api::preview_at(&t.data(),&t.home(),&formal_exe,false).unwrap();assert!(!p.changed);assert_eq!(p.present,10);
+  // Missing own receipt can be recovered without adopting the foreign entries.
+  if !bridge{fs::remove_file(api::receipt_path(&dev)).unwrap();let p=api::preview_at_with_recovery(&dev,&t.home(),&dev_exe,false,true).unwrap();assert!(p.recovery_required);api::apply(&dev,&p).unwrap();}
+  let p=api::preview_at(&dev,&t.home(),&dev_exe,true).unwrap();api::apply(&dev,&p).unwrap();assert_eq!(config(&t.home()),formal_bytes);assert_eq!(fs::read(api::receipt_path(&t.data())).unwrap(),receipt);
+ }
+}
+#[test]fn corrupt_dev_entries_are_not_exempted_as_foreign(){
+ for mutation in ["own-server","own-command","own-timeout","foreign-key-spoof","foreign-extra-field"]{
+  let t=Temp::new();installed(&t);let dev=t.0.join("CodexFloatboard-Dev/shared-local/data");let bridge=dev.join("runtime/FloatboardBridge.exe");let p=api::preview_at(&dev,&t.home(),&bridge,false).unwrap();api::apply(&dev,&p).unwrap();
+  let mut parsed=parsed_config(&t.home());
+  match mutation{
+   "own-server"=>parsed["hooks"]["Stop"][1]["hooks"][0]["server"]=json!("codex_floatboard_broken"),
+   "own-command"=>parsed["hooks"]["SessionEnd"][1]["hooks"][0]["command"]=json!(format!("{} --modified",api::desired_hook(&api::contribution(&dev,&bridge),"SessionEnd")["hooks"][0]["command"].as_str().unwrap())),
+   "own-timeout"=>parsed["hooks"]["Stop"][1]["hooks"][0]["timeout"]=json!(7),
+   "foreign-key-spoof"=>{parsed["mcp_servers"]["codex_floatboard"]=parsed["mcp_servers"]["codex_floatboard_dev"].clone();},
+   _=>parsed["hooks"]["Stop"][0]["unexpected"]=json!(true),
+  }
+  fs::write(t.home().join("config.toml"),toml_edit::ser::to_string_pretty(&parsed).unwrap()).unwrap();let before=config(&t.home());
+  assert!(api::preview_at(&dev,&t.home(),&bridge,false).is_err(),"{mutation}");assert!(api::preview_at(&dev,&t.home(),&bridge,true).is_err(),"{mutation}");assert_eq!(config(&t.home()),before);
+ }
+}

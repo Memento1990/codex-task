@@ -14,6 +14,8 @@ fn legacy_sqlite_tasks_and_timing_match_exactly(){
     let mut store=Store::open(&temp.0,true).unwrap();let mut actual=json!(store.tasks().unwrap());
     // JSON 的 0 与 0.0 均为数字；比较数值，其他字段逐项严格比对。
     fn numbers(value:&mut Value){match value{Value::Number(n)=>*value=json!(n.as_f64().unwrap()),Value::Array(items)=>items.iter_mut().for_each(numbers),Value::Object(items)=>items.values_mut().for_each(numbers),_=>{}}}
+    for task in expected.as_array_mut().unwrap(){task.as_object_mut().unwrap().remove("history");if task["title"].as_str()==Some("")&&task["revision"].as_i64().unwrap_or(-1)<0{if let Some(title)=task["plan"][0]["title"].as_str().map(str::to_owned){task["title"]=json!(title);}}}
+    expected.as_array_mut().unwrap().retain(|task|task["revision"].as_i64().unwrap_or(-1)>=0||task["plan"].as_array().is_some_and(|plan|!plan.is_empty()));
     numbers(&mut expected);numbers(&mut actual);assert_eq!(actual,expected);
 }
 #[test]
@@ -51,7 +53,7 @@ fn sensitive_unlisted_fields_never_persist(){
 }
 #[test]
 fn queue_and_quarantine_survive_restart(){
-    let temp=Temp::new();for _ in 0..5{store::enqueue(&temp.0,event("Stop")).unwrap();}fs::write(temp.0.join("inbox/broken.json"),"[1]").unwrap();let mut store=Store::open(&temp.0,false).unwrap();assert_eq!(runtime::drain(&temp.0,&mut store).unwrap(),(5,1));drop(store);let mut store=Store::open(&temp.0,false).unwrap();assert_eq!(store.tasks().unwrap().len(),1);assert_eq!(runtime::drain(&temp.0,&mut store).unwrap(),(0,0));assert!(temp.0.join("rejected/broken.json").exists());
+    let temp=Temp::new();for _ in 0..5{store::enqueue(&temp.0,event("Stop")).unwrap();}fs::write(temp.0.join("inbox/broken.json"),"[1]").unwrap();let mut store=Store::open(&temp.0,false).unwrap();assert_eq!(runtime::drain(&temp.0,&mut store).unwrap(),(5,1));drop(store);let mut store=Store::open(&temp.0,false).unwrap();assert!(store.tasks().unwrap().is_empty());assert_eq!(runtime::drain(&temp.0,&mut store).unwrap(),(0,0));assert!(temp.0.join("rejected/broken.json").exists());
 }
 #[test]
 fn hook_resume_includes_pending_revision_without_token_in_tasks(){
@@ -74,6 +76,24 @@ fn window_state_preserves_legacy_fields_and_validates_types(){
 #[test]
 fn preferences_validate_boundaries_without_touching_registry(){
     for value in [json!({"notifications":"yes"}),json!({"theme":"custom"}),json!({"notification_seconds":0}),json!({"notification_seconds":31}),json!({"notification_seconds":true})]{assert!(desktop::validate_options(&value).is_err());}let temp=Temp::new();let value=desktop::save_options(&temp.0,&temp.0.join("CodexFloatboard.exe"),&desktop::defaults()).unwrap();assert_eq!(value["auto_start"],false);assert_eq!(desktop::load_options(&temp.0)["theme"],"light");
+}
+#[test]
+fn dock_preferences_and_detail_state_are_backward_compatible(){
+    assert_eq!(desktop::validate_options(&json!({})).unwrap()["dock_hover_summary"],true);
+    assert!(desktop::validate_options(&json!({"dock_hover_summary":"true"})).is_err());
+    assert_eq!(desktop::validate_options(&json!({})).unwrap()["dock_summary_mode"],"hover");
+    assert_eq!(desktop::validate_options(&json!({"dock_hover_summary":false})).unwrap()["dock_summary_mode"],"never");
+    assert_eq!(desktop::validate_options(&json!({"dock_hover_summary":true})).unwrap()["dock_summary_mode"],"hover");
+    for invalid in [json!(true),json!(null),json!("sometimes")]{assert!(desktop::validate_options(&json!({"dock_summary_mode":invalid})).is_err());}
+    for mode in ["always","hover","never"]{let valid=desktop::validate_options(&json!({"dock_summary_mode":mode,"dock_hover_summary":false})).unwrap();assert_eq!(valid["dock_summary_mode"],mode);assert_eq!(valid["dock_hover_summary"],mode!="never");}
+    let temp=Temp::new();let mut options=desktop::defaults();options["dock_summary_mode"]=json!("never");
+    desktop::save_options(&temp.0,&temp.0.join("CodexFloatboard.exe"),&options).unwrap();
+    assert_eq!(desktop::load_options(&temp.0)["dock_hover_summary"],false);
+    let mut engine=desktop::Engine::new(temp.0.clone(),temp.0.join("CodexFloatboard.exe"));
+    engine.call("window_save",json!({"details_collapsed":true,"selected":"keep-selection","tab":2})).unwrap();
+    assert_eq!(engine.call("window_load",json!({})).unwrap()["details_collapsed"],true);
+    assert!(engine.call("window_save",json!({"details_collapsed":1})).is_err());
+    assert_eq!(engine.call("window_load",json!({})).unwrap()["selected"],"keep-selection");
 }
 fn setup_config(root:&Path,home:&Path){fs::create_dir_all(home).unwrap();fs::write(home.join("config.toml"),"# original comment\nmodel = 'preserve-model'\n[mcp_servers.other]\ncommand = 'keep.exe'\n[hooks]\nStop = [{hooks = [{type = 'command', command = 'other-hook', timeout = 3}]}]\n").unwrap();let _=root;}
 #[test]

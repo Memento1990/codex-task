@@ -20,7 +20,7 @@
 
 ## 本机产物与编译缓存
 
-- 根目录 `releases/v0.9.0` 为新发布运行包；根目录启动脚本启动0.9.0。旧 `releases/v0.7.0` 和 `releases/v0.8.0-candidate` 暂时保留供活动旧进程使用，不会强制结束它们。
+- 日常正式安装位于用户LOCALAPPDATA/Programs/CodexFloatboard，仅从GitHub Release安装和更新；仓库根启动脚本指向该固定安装，不再运行releases副本。开发使用 `pnpm dev:isolated`，布局及限制见[开发隔离说明](../docs/development-isolation.md)。旧releases副本仅为历史归档/活动旧Reporter保留，不作为开发入口，不强制结束它们。
 - 旧 Python dist、PyInstaller 构建缓存及 `app/releases` 的重复发行目录已清理；`build/local-msvc` 工具链保留，历史原生验收资料归档到仓库外。
 - 项目内两个 Rust `target` 目录可安全回收（先停止构建及使用其中程序的测试进程）。首次重新构建需要重新编译。
 - Cargo 默认已在用户级 `CARGO_HOME` 共享下载的依赖源码；`CARGO_TARGET_DIR` 可把构建产物放到外部公共目录，但工具链、profile、features、依赖版本和参数不同仍会产生不同产物，多项目也可能竞争构建锁。更精细的跨项目编译复用可另行配置 `sccache`。

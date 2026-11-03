@@ -30,7 +30,31 @@ pub fn spawn_worker(root:&Path)->Result<()>{
             let _=fs::remove_file(root.join(crate::migration::ACK));
         }else{return Err("采集器正在安全停机迁移".into());}
     }
-    if ProcessLock::acquire(&root.join("collector.lock")).is_err(){return Ok(());}
+    // Upgrade only the background collector, never a Hook/MCP session process.
+    // The legacy collector already supports this cooperative shutdown request;
+    // queued inbox events survive the handoff. Serialize competing new launchers.
+    let _handoff=ProcessLock::acquire(&root.join("collector-upgrade.lock"))?;
+    let mut upgraded=false;
+    if ProcessLock::acquire(&root.join("collector.lock")).is_err(){
+        // Unknown locks may belong to a migration/test or an initializing worker.
+        // Never request shutdown without a recent observed collector heartbeat.
+        let Ok(health)=read_json(&root.join("health.json"))else{return Ok(());};
+        if health["at"].as_f64().is_none_or(|at|now()-at>5.){return Ok(());}
+        if health["version"]==env!("CARGO_PKG_VERSION"){return Ok(());}
+        // Do not let an older resident Hook downgrade a newer collector.
+        if health["version"].as_str().and_then(|s|semver::Version::parse(s).ok()).is_some_and(|v|v>semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap()){return Ok(());}
+        atomic_json(&root.join("worker-shutdown.json"),&json!({"reason":"collector_upgrade","version":env!("CARGO_PKG_VERSION")}))?;
+        let deadline=std::time::Instant::now()+Duration::from_secs(8);
+        loop {
+            if let Ok(_released)=ProcessLock::acquire(&root.join("collector.lock")){
+                // Keep the request until the target collector owns its lock:
+                // legacy launchers do not honor collector-upgrade.lock and may race.
+                upgraded=true;break;
+            }
+            if std::time::Instant::now()>=deadline{return Err("旧采集器未确认安全交接，请稍后重试；会话未停止".into());}
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
     // During handoff the original worker owns origin locks and will activate
     // this root itself. Do not race it with a newly spawned destination worker.
     if let Ok(origins)=read_json(&root.join("migration-origins.json")) {
@@ -40,7 +64,21 @@ pub fn spawn_worker(root:&Path)->Result<()>{
             if ProcessLock::acquire(&old.join("collector.lock")).is_err(){return Ok(());}
         }}
     }
-    Command::new(reporter_path()?).arg("--worker").arg("--data-dir").arg(root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(0x08000000).spawn().map_err(|_|"采集器无法启动")?;Ok(())
+    let launch=||Command::new(reporter_path()?).arg("--worker").arg("--data-dir").arg(root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(0x08000000).spawn().map_err(|_|"采集器无法启动".to_string());
+    let mut child=launch()?;
+    if !upgraded{return Ok(());}
+    let deadline=std::time::Instant::now()+Duration::from_secs(8);
+    loop {
+        if read_json(&root.join("health.json")).is_ok_and(|h|h["pid"]==child.id()&&h["version"]==env!("CARGO_PKG_VERSION")&&h["status"]=="ok"){return Ok(());}
+        if child.try_wait().map_err(|_|"采集器状态不可用")?.is_some(){
+            if std::time::Instant::now()>=deadline{return Err("采集器启动失败，事件仍保留在邮箱中".into());}
+            atomic_json(&root.join("worker-shutdown.json"),&json!({"reason":"collector_upgrade","version":env!("CARGO_PKG_VERSION")}))?;
+            std::thread::sleep(Duration::from_millis(375));
+            child=launch()?;
+        }
+        if std::time::Instant::now()>=deadline{return Err("采集器尚未确认就绪，请稍后重试".into());}
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 pub fn drain(root:&Path,store:&mut Store)->Result<(usize,usize)>{
     let inbox=root.join("inbox");crate::migration::check_path(&inbox)?;fs::create_dir_all(&inbox).map_err(|_|"事件邮箱不可用")?;
@@ -83,6 +121,11 @@ fn worker_with_locks(root:&Path,mut retained:Vec<(std::path::PathBuf,ProcessLock
                 retained.push((old.to_path_buf(),ProcessLock::acquire(&old.join("collector.lock")).map_err(|_| "旧目录采集器仍在运行，请退出旧版本后重启")?));
             }
         }}
+    }
+    // Only the requested replacement acknowledges an upgrade request, after
+    // obtaining collector ownership. A racing legacy collector exits normally.
+    if read_json(&root.join("worker-shutdown.json")).is_ok_and(|v|v["reason"]=="collector_upgrade"&&v["version"]==env!("CARGO_PKG_VERSION")){
+        fs::remove_file(root.join("worker-shutdown.json")).map_err(|_|"采集器交接确认失败")?;
     }
     let mut store=Store::open(root,false)?;let mut rejected=fs::read_dir(root.join("rejected")).map(|items|items.flatten().filter(|e|e.path().extension().is_some_and(|x|x=="json")).count()).unwrap_or(0);
     loop{
@@ -131,7 +174,7 @@ fn worker_with_locks(root:&Path,mut retained:Vec<(std::path::PathBuf,ProcessLock
                 Ok::<usize,String>(count)
             })();
             let state=match result{Ok(count)=>{rejected+=count;"ok"},Err(_)=>"storage_error"};
-            let _=atomic_json(&root.join("health.json"),&json!({"pid":std::process::id(),"at":now(),"rejected":rejected,"status":state,"implementation":"rust","migration_protocol":1}));
+            let _=atomic_json(&root.join("health.json"),&json!({"pid":std::process::id(),"at":now(),"rejected":rejected,"status":state,"implementation":"rust","version":env!("CARGO_PKG_VERSION"),"migration_protocol":1}));
         }
         std::thread::sleep(Duration::from_millis(350));
     }

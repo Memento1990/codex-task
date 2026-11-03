@@ -4,6 +4,9 @@ use serde_json::{json,Value};
 use toml_edit::DocumentMut;
 use crate::{Result,store::{atomic_bytes,atomic_json,read_json,hash,text},runtime::{ProcessLock,reporter_path}};
 pub const HOOKS:[&str;9]=["SessionStart","UserPromptSubmit","PreToolUse","PostToolUse","PermissionRequest","Stop","SessionEnd","SubagentStart","SubagentStop"];
+/// A path component, never process-wide environment, selects the DEV owner.
+/// Substrings (including CodexFloatboard-Dev-old) remain formal namespaces.
+pub fn server_name(root:&Path)->&'static str{if root.components().any(|part|part.as_os_str().to_string_lossy().eq_ignore_ascii_case("CodexFloatboard-Dev")){"codex_floatboard_dev"}else{"codex_floatboard"}}
 pub fn codex_home()->PathBuf{std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(||PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default()).join(".codex"))}
 pub fn command_line(args:&[String])->String{args.iter().map(|arg|{
     if !arg.is_empty()&&!arg.contains([' ', '\t','"']){return arg.clone();}
@@ -27,10 +30,14 @@ pub fn contribution(root:&Path,reporter:&Path)->Value{
         out["mcp"]["tools"]["hook_context"]=json!({"approval_mode":"approve"});
         let mut hooks=serde_json::Map::new();
         for event in HOOKS.into_iter().filter(|event|*event!="SessionEnd"){
-            hooks.insert(event.into(),json!({"hooks":[{"type":"mcp_tool","server":"codex_floatboard","tool":"hook_context","input":{"hook_event_name":event,"session_id":"${session_id}","cwd":"${cwd}"},"timeout":5}]}));
+            hooks.insert(event.into(),json!({"hooks":[{"type":"mcp_tool","server":server_name(root),"tool":"hook_context","input":{"hook_event_name":event,"session_id":"${session_id}","cwd":"${cwd}"},"timeout":5}]}));
         }
         out["hooks_by_event"]=Value::Object(hooks);
     }
+    // Codex caps SessionEnd at 3 seconds; preserve the historical generic
+    // command hook (5s) as exact receipt evidence for older installations.
+    let mut session_end=out["hook"].clone();session_end["hooks"][0]["timeout"]=json!(3);
+    out["hooks_by_event"]["SessionEnd"]=session_end;
     out
 }
 pub struct Preview{pub path:PathBuf,pub home:PathBuf,pub before_hash:String,pub updated:Vec<u8>,pub remove:bool,pub contribution:Value,pub changes:Vec<Value>,pub present:usize,pub changed:bool,pub recovery_required:bool,pub recovery_confirmed:bool,pub receipt_before:Option<Value>,pub expected_runtime:Option<(PathBuf,Option<Value>,Value)>}
@@ -77,19 +84,52 @@ fn recover_locked(root:&Path,home:&Path)->Result<bool>{
 }
 /// Recover only our two-file transaction, never restore an entire config backup.
 pub fn recover_at(root:&Path,home:&Path)->Result<bool>{let _lock=ProcessLock::acquire(&crate::bridge::control_root(root).join("integration.lock")).map_err(|_|"另一个接入操作正在进行")?;recover_locked(root,home)}
-fn suspected_hook(value:&Value)->bool{let raw=value.to_string().to_lowercase();raw.contains("floatboardreporter")||raw.contains("codex_floatboard")||raw.contains("floatboardbridge")}
+fn suspected_hook(value:&Value)->bool{let raw=value.to_string().to_lowercase();raw.contains("floatboardreporter")||raw.contains("codex_floatboard")||raw.contains("floatboardbridge")||value["hooks"].as_array().is_some_and(|hooks|hooks.iter().any(|hook|hook["type"]=="mcp_tool"&&hook["tool"]=="hook_context"))}
+/// Only an exact, complete contribution under the other namespace is foreign.
+/// In particular, a same-owner command cannot hide behind a foreign MCP key.
+fn foreign_contribution(parsed:&Value,root:&Path)->Option<Value>{
+    let foreign=if server_name(root)=="codex_floatboard"{"codex_floatboard_dev"}else{"codex_floatboard"};
+    let mcp=&parsed["mcp_servers"][foreign];
+    let reporter=Path::new(mcp["command"].as_str()?);
+    if !reporter.is_absolute(){return None;}
+    let filename=reporter.file_name()?.to_string_lossy();
+    let foreign_root=if filename.eq_ignore_ascii_case("FloatboardBridge.exe"){
+        // Stable bridges own their data selection; the bridge's path carries
+        // the same namespace marker as its private control/data directory.
+        reporter.parent()?
+    }else if filename.eq_ignore_ascii_case("FloatboardReporter.exe"){
+        let args=mcp["args"].as_array()?;
+        if args.len()!=3||args[0]!="--mcp"||args[1]!="--data-dir"{return None;}
+        let selected=Path::new(args[2].as_str()?);
+        if !selected.is_absolute(){return None;}
+        selected
+    }else{return None;};
+    if server_name(foreign_root)!=foreign{return None;}
+    let current=contribution(foreign_root,reporter);
+    let mut prior=current.clone();prior["hooks_by_event"].as_object_mut()?.remove("SessionEnd");
+    for expected in [current,prior,legacy_contribution(foreign_root,reporter)]{
+        if mcp==&expected["mcp"]&&HOOKS.iter().all(|event|parsed["hooks"][event].as_array().is_some_and(|entries|entries.iter().filter(|entry|*entry==&desired_hook(&expected,event)).count()==1)){return Some(expected);}
+    }
+    None
+}
+fn suspected_owned_hook(value:&Value,event:&str,foreign:Option<&Value>)->bool{
+    suspected_hook(value)&&!foreign.is_some_and(|contribution|HOOKS.contains(&event)&&value==&desired_hook(contribution,event))
+}
 fn recognized_legacy(parsed:&Value,root:&Path)->Option<Value>{
-    let mcp=&parsed["mcp_servers"]["codex_floatboard"];
+    let foreign=foreign_contribution(parsed,root);
+    let mcp=&parsed["mcp_servers"][server_name(root)];
     let reporter=Path::new(mcp["command"].as_str()?);
     if !reporter.is_absolute(){return None;}
     let filename=reporter.file_name()?.to_string_lossy();
     if !filename.eq_ignore_ascii_case("FloatboardReporter.exe")&&!(filename.eq_ignore_ascii_case("FloatboardBridge.exe")&&crate::bridge::integration_reporter(root).ok().as_deref()==Some(reporter)){return None;}
-    for expected in [contribution(root,reporter),legacy_contribution(root,reporter)]{
+    let current=contribution(root,reporter);
+    let mut prior=current.clone();prior["hooks_by_event"].as_object_mut()?.remove("SessionEnd");
+    for expected in [current,prior,legacy_contribution(root,reporter)]{
         if mcp!=&expected["mcp"]{continue;}
         let matches=HOOKS.iter().all(|name|{
             let Some(hooks)=parsed["hooks"][name].as_array()else{return false;};
             let expected_hook=desired_hook(&expected,name);
-            hooks.iter().filter(|entry|*entry==&expected_hook).count()==1&&!hooks.iter().any(|entry|entry!=&expected_hook&&suspected_hook(entry))
+            hooks.iter().filter(|entry|*entry==&expected_hook).count()==1&&!hooks.iter().any(|entry|entry!=&expected_hook&&suspected_owned_hook(entry,name,foreign.as_ref()))
         });
         if matches{return Some(expected);}
     }
@@ -110,6 +150,7 @@ pub fn preview_at_with_recovery(root:&Path,home:&Path,reporter:&Path,remove:bool
     let mut document=source.trim_start_matches('\u{feff}').parse::<DocumentMut>().map_err(|_|"Codex 配置无法解析；未修改文件")?;
     let parsed:Value=toml_edit::de::from_document(document.clone()).map_err(|_|"Codex 配置无法解析；未修改文件")?;
     let desired=contribution(root,reporter);
+    let key=server_name(root);let foreign=foreign_contribution(&parsed,root);
     let receipt_before=load_receipt(root)?;
     let mut recovery_required=false;
     let owned=if let Some(receipt)=&receipt_before {
@@ -123,27 +164,27 @@ pub fn preview_at_with_recovery(root:&Path,home:&Path,reporter:&Path,remove:bool
                 // Recognize the current before image directly. Never restore a
                 // whole backup or guess ownership from a command's basename.
                 if let Some(old)=recognized_legacy(&parsed,root){old}
-                else if parsed["mcp_servers"]["codex_floatboard"].is_null()&&!parsed["hooks"].as_object().is_some_and(|events|events.values().any(|entries|entries.as_array().is_some_and(|entries|entries.iter().any(suspected_hook)))){desired.clone()}
+                else if parsed["mcp_servers"][key].is_null()&&!parsed["hooks"].as_object().is_some_and(|events|events.iter().any(|(event,entries)|entries.as_array().is_some_and(|entries|entries.iter().any(|entry|suspected_owned_hook(entry,event,foreign.as_ref()))))){desired.clone()}
                 else{return Err("旧事务停在原配置，但无法严格识别旧归属；未修改配置".into());}
             }else{return Err("旧版未完成事务的配置与前后校验均不匹配；未恢复或覆盖".into());}
         }else{receipt.get("contribution").filter(|v|v["mcp"].is_object()&&v["hook"].is_object()).cloned().ok_or("接入归属记录无效")?}
     }else if let Some(legacy)=recognized_legacy(&parsed,root){recovery_required=true;legacy}else{desired.clone()};
     // Even an exact current contribution requires consent when ownership was lost.
-    if receipt_before.is_none() && !parsed["mcp_servers"]["codex_floatboard"].is_null(){recovery_required=true;}
-    let installed=&parsed["mcp_servers"]["codex_floatboard"];
+    if receipt_before.is_none() && !parsed["mcp_servers"][key].is_null(){recovery_required=true;}
+    let installed=&parsed["mcp_servers"][key];
     if !installed.is_null()&&installed!=&owned["mcp"]{return Err("同名 MCP 配置已被修改；工具不会覆盖".into());}
     if !parsed["hooks"].is_null()&&!parsed["hooks"].is_object(){return Err("现有 hooks 格式不兼容".into());}
     if let Some(events)=parsed["hooks"].as_object(){for (name,entries) in events {
-        if !HOOKS.contains(&name.as_str()) && entries.as_array().is_some_and(|entries|entries.iter().any(suspected_hook)){return Err("额外事件中存在疑似看板 Hook，未自动接管".into());}
+        if !HOOKS.contains(&name.as_str()) && entries.as_array().is_some_and(|entries|entries.iter().any(|entry|suspected_owned_hook(entry,name,foreign.as_ref()))){return Err("额外事件中存在疑似看板 Hook，未自动接管".into());}
     }}
     let mut present=usize::from(!installed.is_null());let mut changes=Vec::new();
     let target=if remove{Value::Null}else{desired["mcp"].clone()};
-    let mut records=vec![("本地进度连接".to_owned(),"mcp_servers".to_owned(),"codex_floatboard".to_owned(),installed.clone(),target)];
+    let mut records=vec![("本地进度连接".to_owned(),"mcp_servers".to_owned(),key.to_owned(),installed.clone(),target)];
     let names=["会话开始","收到请求","工具调用前","工具调用后","等待审批","本轮结束","会话结束","子任务开始","子任务结束"];
     for (name,title) in HOOKS.iter().zip(names){
         let owned_hook=desired_hook(&owned,name);let desired_hook=desired_hook(&desired,name);
         let raw=&parsed["hooks"][name];let current=if raw.is_null(){Vec::new()}else{raw.as_array().ok_or("现有 Hook 配置格式不兼容")?.clone()};
-        if current.iter().any(|entry|entry!=&owned_hook&&suspected_hook(entry)){return Err(format!("{name} 中有疑似被修改的旧看板 Hook；未覆盖或追加，请先检查冲突"));}
+        if current.iter().any(|entry|entry!=&owned_hook&&suspected_owned_hook(entry,name,foreign.as_ref())){return Err(format!("{name} 中有疑似被修改的旧看板 Hook；未覆盖或追加，请先检查冲突"));}
         if current.iter().filter(|entry|*entry==&owned_hook).count()>1{return Err(format!("{name} 中存在重复看板 Hook，未自动修改"));}
         if receipt_before.is_none()&&current.contains(&owned_hook){recovery_required=true;}
         let exists=current.contains(&owned_hook);present+=usize::from(exists);

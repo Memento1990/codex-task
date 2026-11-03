@@ -1,6 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+import { isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+test('blocker reminder styling is independent from sticky persistence',()=>{
+  const notice:Notice={task_id:'a',title:'Notice',lines:[],tab:0,sticky:true};
+  assert.equal(isBlockerNotice(notice),false);assert.equal(noticeAutoDismiss(notice),false);
+  assert.equal(isBlockerNotice({...notice,tab:1,sticky:false}),true);
+});
+test('drag starts only after four pixels while primary button is held',()=>{
+  assert.equal(dragThresholdReached(10,10,13,10,1),false);
+  assert.equal(dragThresholdReached(10,10,14,10,1),true);
+  assert.equal(dragThresholdReached(10,10,13,13,1),true);
+  assert.equal(dragThresholdReached(10,10,20,20,0),false);
+  assert.equal(dragThresholdReached(10,10,20,20,2),false);
+});
+test('summary modes prefer new setting with legacy boolean fallback',()=>{
+  assert.equal(dockSummaryMode({}),'hover');assert.equal(dockSummaryMode({dock_hover_summary:false}),'never');assert.equal(dockSummaryMode({dock_hover_summary:true}),'hover');
+  for(const mode of ['always','hover','never'] as const)assert.equal(dockSummaryMode({dock_summary_mode:mode,dock_hover_summary:false}),mode);
+  assert.equal(dockSummaryMode({dock_summary_mode:'invalid',dock_hover_summary:false}),'never');
+  assert.equal(dockSummaryVisible('always',false),true);assert.equal(dockSummaryVisible('always',true),true);
+  assert.equal(dockSummaryVisible('hover',false),false);assert.equal(dockSummaryVisible('hover',true),true);
+  assert.equal(dockSummaryVisible('never',true),false);assert.equal(dockSummaryVisible('never',false),false);
+});
+test('dock summary uses focused live task and reports global blockers without averaging',()=>{
+  const tasks=[{id:'a',title:'Focused',status:'running',plan:[{status:'completed'},{status:'inProgress'},{status:'pending'}],blockers:[],current_step:'Testing'},{id:'b',title:'Other',status:'waiting',plan:[{status:'completed'}],blockers:[{open:true},{open:false}]},{id:'old',archived:true,status:'completed',plan:[],blockers:[{open:true}]}] as unknown as Task[];
+  const summary=dockSummary(tasks,'a');
+  assert.equal(summary.title,'Focused');assert.equal(summary.progress,1/3);assert.equal(summary.blockers,1);assert.equal(summary.badge,'! 1');assert.equal(summary.active,2);assert.equal(summary.step,'Testing');
+  assert.equal(dockSummary(tasks,'old').task?.id,'b');
+});
+test('dock never invents progress without a plan and excludes archived completion',()=>{
+  const task={id:'live',title:'No plan',status:'running',plan:[],blockers:[]} as unknown as Task;
+  assert.equal(dockSummary([task],'live').progress,null);assert.equal(dockSummary([task],'live').badge,'—');
+  assert.equal(dockSummary([],'').allCompleted,false);
+  assert.equal(dockSummary([{...task,status:'completed'}],'').badge,'✓');
+  assert.equal(dockSummary([{...task,status:'completed',archived:true}],'').allCompleted,false);
+  assert.equal(dockSummary([{...task,status:'unreported'}],'').active,0);
+});
 test('human elapsed freezes completed timers and distinguishes unknown',()=>{
   assert.equal(elapsed(null,100),'起点未记录');
   assert.equal(elapsed({started_at:null,ended_at:null,seconds:0,since:null,partial:false},100),'未开始');
@@ -25,17 +59,46 @@ test('notification previews are independent and retain only the latest four',()=
   assert.equal(replaced.length,4);
   assert.equal(replaced.at(-1)?.title,'updated');
 });
+test('blocker notices remain manual until dismissed and ordinary previews remain bounded',()=>{
+  const sticky:Notice={task_id:'blocker',title:'Blocked',lines:[],tab:1,sticky:true};
+  const preview=createTestNoticeFactory();
+  const ordinary=Array.from({length:6},()=>preview(defaults));
+  const stack=ordinary.reduce((items,item)=>noticeStack(items,item),[sticky] as Notice[]);
+  assert.equal(stack.length,5);
+  assert.equal(stack[0],sticky);
+  assert.equal(noticeAutoDismiss(sticky),false);
+  assert.equal(noticeAutoDismiss(ordinary[0]),true);
+  const updated=noticeStack(stack,{...sticky,title:'Resolved',sticky:false});
+  assert.equal(updated.at(-1)?.sticky,true);
+  assert.equal(noticeAutoDismiss(updated.at(-1)!),false);
+  const afterManualClose=updated.filter(item=>item.task_id!=='blocker');
+  assert.equal(noticeStack(afterManualClose,{...sticky,sticky:false}).at(-1)?.sticky,false);
+  const manySticky=Array.from({length:8},(_,index)=>({...sticky,task_id:`blocker-${index}`})).reduce((items,item)=>noticeStack(items,item),[] as Notice[]);
+  assert.equal(manySticky.length,8);
+});
+test('legacy activity tabs normalize to checklist without hiding completed data',()=>{
+  for(const tab of [3,-1,4,null,undefined,'1',NaN])assert.equal(normalizeTab(tab),0);
+  assert.equal(normalizeTab(1),1);
+  assert.equal(normalizeTab(2),2);
+});
+test('hook-only placeholders stay hidden but plans and real progress remain visible',()=>{
+  const tasks=[{id:'hook',status:'unreported',plan:[],title:'',blockers:[]},{id:'plan',status:'unreported',plan:[{id:'s'}],title:'',blockers:[]},{id:'progress',status:'running',plan:[],title:'Reported',blockers:[]},{id:'done',status:'completed',plan:[],title:'',blockers:[]}] as unknown as Task[];
+  assert.deepEqual(tasks.filter(isReportedTask).map(task=>task.id),['plan','progress','done']);
+  assert.deepEqual(visibleTasks(tasks,'all').map(task=>task.id),['plan','progress']);
+  assert.equal(taskTitle(tasks[1]),'已同步计划');
+  assert.equal(taskTitle(tasks[2]),'Reported');
+});
 test('historical hooks and local config do not imply a verified current connection',()=>{
   for(const state of ['ready','partial','awaiting_reload','awaiting_session','session_received','error']){
     assert.equal(integrationStep({state,hook_seen:true,mcp_connected:true}).verified,false);
   }
-  assert.equal(connectionStatus({state:'ready',hook_seen:true}),'连接待验证');
-  assert.equal(connectionStatus({state:'session_received',hook_seen:true}),'已收到当前会话');
-  assert.equal(connectionStatus({state:'sync_verified'}),'同步已验证');
+  assert.equal(connectionStatus({state:'ready',hook_seen:true}),'配置完成 · 连接待确认');
+  assert.equal(connectionStatus({state:'session_received',hook_seen:true}),'会话事件已收到');
+  assert.equal(connectionStatus({state:'sync_verified'}),'接入与同步已验证');
   assert.equal(integrationStep({state:'sync_verified'}).verified,true);
   assert.equal(integrationStep({state:'sync_verified',runtime_update_available:true}).verified,true);
   assert.equal(integrationStep({state:'sync_verified',runtime_update_available:true}).action,'done');
-  assert.equal(connectionStatus({state:'sync_verified',runtime_update_available:true}),'同步已验证');
+  assert.equal(connectionStatus({state:'sync_verified',runtime_update_available:true}),'接入与同步已验证');
 });
 test('wizard provides one safe next action for each connection phase',()=>{
   assert.equal(integrationStep({state:'missing'}).action,'connect');
@@ -44,7 +107,17 @@ test('wizard provides one safe next action for each connection phase',()=>{
   for(const state of ['awaiting_reload','awaiting_session','session_received','error','future_state'])assert.equal(integrationStep({state}).action,'check');
   assert.equal(integrationStep({state:'sync_verified'}).action,'done');
   assert.match(integrationStep({state:'missing'}).description,/当前用户目录安装/);
-  assert.match(integrationStep({state:'awaiting_reload'}).description,/稍后完成/);
+  assert.match(integrationStep({state:'awaiting_reload'}).description,/不代表未授权/);
+});
+test('layered connection evidence does not confuse pending tasks with offline',()=>{
+  assert.equal(connectionTone({state:'awaiting_reload'}),'neutral');
+  assert.equal(connectionTone({state:'awaiting_session',mcp_connected:true}),'confirmed');
+  assert.match(integrationStep({state:'awaiting_session',mcp_connected:true}).title,/连接已确认/);
+  assert.equal(connectionTone({state:'session_received'}),'confirmed');
+  assert.equal(integrationStep({state:'awaiting_reload',config_state:'partial',mcp_connected:true}).title,'配置需要检查');
+  assert.equal(connectionStatus({state:'sync_verified',config_state:'partial'}),'配置需要检查');
+  assert.equal(connectionTone({state:'sync_verified',config_state:'partial'}),'problem');
+  assert.equal(evidenceTime(null),'未提供证据时间');
 });
 test('diagnostics preserve strings, arrays and structured details',()=>{
   assert.equal(diagnosticText(undefined),'');

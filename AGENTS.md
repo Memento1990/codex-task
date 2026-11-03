@@ -1,0 +1,10 @@
+# Local development and installed release separation
+
+- Daily-use installation: `%LOCALAPPDATA%/Programs/CodexFloatboard`. Treat this directory as deployed production; never copy Cargo outputs, locally packaged ZIPs, or modified assets into it.
+- Production data: `%LOCALAPPDATA%/CodexFloatboard/data`; production Codex configuration and existing Reporter sessions are not development fixtures. Do not stop them or overwrite their owned connection configuration. User explicitly authorized DEV to use local Codex on 2026-11-02: only independently owned codex_floatboard_dev entries may be added/removed after preview/confirmation; retain codex_floatboard and all other configuration.
+- Start development GUI ONLY via `app/desktop/dev-isolated.ps1` / `pnpm dev:isolated` in that directory. It uses `%LOCALAPPDATA%/CodexFloatboard-Dev/<workspace-hash>` with separate LOCALAPPDATA, APPDATA, data/control and WebView profile. Default local Codex mode shares the user's CODEX_HOME without copying auth; -CodexMode isolated explicitly uses the independent CODEX_HOME for fixtures. Never copy actual credentials into the sandbox.
+- The DEV wrapper launches an already-built executable, not a server. Build explicitly first. Avoid bare Tauri dev or direct build-output execution. New development builds reject unisolated target/debug launches, display DEV, and deny production updates/system auto-start.
+- Repository root `启动任务侧窗.cmd` and the desktop “正式版” shortcut launch the installed root launcher, not a repository releases directory.
+- Development lifecycle: code -> isolated build/test -> user-authorized commit/push/GitHub Release -> installed app checks/downloads verified release -> explicit install confirmation. Do not silently publish a new version or replace a published tag/asset to deliver local changes.
+- Existing historical releases may be occupied by old Reporter processes; retain them until sessions end normally. Do not kill Codex/Reporter/GUI to clean directories.
+- Details: docs/development-isolation.md.

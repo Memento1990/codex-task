@@ -1,9 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { done, elapsed, kinds, openBlockers, runtime, safeReference, status, type Task } from './model';
+  import { done, elapsed, taskTitle, openBlockers, runtime, safeReference, status, type Task } from './model';
   import { action, native } from './host';
   let { task, tab = $bindable(0), now, completedOnly = false, onCompleted = () => {} }: {task: Task; tab?: number; now: number; completedOnly?: boolean; onCompleted?: () => void} = $props();
-  const tabs = ['清单', '卡点', '证据', '动态'];
+  const tabs = ['清单', '卡点', '证据'];
   let steps = $derived(task.plan.filter(step => completedOnly ? step.status === 'completed' : step.status !== 'completed'));
   let blockers = $derived([...task.blockers].sort((a,b) => Number(b.open)-Number(a.open)));
   let scroll: HTMLDivElement, previous = '';
@@ -11,7 +11,7 @@
   function open(reference: string) { if (native) void action('open_reference', reference); }
 </script>
 <section class="detail">
-  <div class="detail-heading"><div class="detail-title"><span class="state-dot {task.status}"></span><h1 title={task.title}>{task.title || '等待结构化汇报'}</h1><span class="tag {task.status}">{status[task.status]}</span></div>
+  <div class="detail-heading"><div class="detail-title"><span class="state-dot {task.status}"></span><h1 title={task.title}>{taskTitle(task)}</h1><span class="tag {task.status}">{status[task.status]}</span></div>
     <div class="detail-meta"><span title={task.cwd}>{task.cwd.split(/[\\/]/).filter(Boolean).at(-1) || task.host_id}</span><span>Codex {runtime[task.runtime]}</span><span>{done(task)}/{task.plan.length}</span><span class="elapsed" title="自然经过时间，包含等待与受阻">耗时 {elapsed(task.timing,now)}</span></div>
     {#if task.current_step}<p class="current-step">{task.current_step}</p>{/if}
     <div class="progress"><i class:complete={task.status === 'completed'} style:width={`${task.plan.length ? done(task)/task.plan.length*100 : 0}%`}></i></div>
@@ -30,9 +30,6 @@
     {:else if tab === 2}
       {#each task.evidence as item}<article class="evidence"><strong>{item.label}</strong>{#if item.reference}<p>{item.reference}</p>{#if safeReference(item.reference)}<button class="text-button" onclick={() => open(item.reference)}>打开证据 ↗</button>{/if}{/if}</article>{/each}
       {#if !task.evidence.length}<div class="empty">暂无验收证据</div>{/if}
-    {:else}
-      {#each task.history as entry}<article class="activity"><time>{new Date(entry.at*1000).toLocaleTimeString('zh-CN',{hour12:false})}</time><div>{kinds[entry.kind] || entry.kind}{#if entry.tool}<p>{entry.tool}</p>{/if}{#if entry.status}<small>{status[entry.status]}</small>{/if}</div></article>{/each}
-      {#if !task.history.length}<div class="empty">暂无动态</div>{/if}
     {/if}
   </div>
 </section>

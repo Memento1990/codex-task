@@ -2,10 +2,13 @@ use std::{collections::HashMap,path::{Path,PathBuf}};
 use serde_json::{json,Value};
 use crate::{Result,now,store::{Store,read_json,atomic_json},integration};
 
-pub fn defaults()->Value{json!({"auto_start":false,"show_taskbar":false,"theme":"light","notifications":true,"notification_seconds":3,"startup_command":""})}
+pub fn defaults()->Value{json!({"auto_start":false,"show_taskbar":false,"theme":"light","notifications":true,"notification_seconds":3,"dock_hover_summary":true,"dock_summary_mode":"hover","startup_command":""})}
 pub fn validate_options(value:&Value)->Result<Value>{
-    if !value.is_object(){return Err("设置格式无效".into());}let mut out=defaults();for key in ["auto_start","show_taskbar","theme","notifications","notification_seconds"]{if let Some(value)=value.get(key){out[key]=value.clone();}}
-    if ["auto_start","show_taskbar","notifications"].iter().any(|k|!out[k].is_boolean()){return Err("开关设置无效".into());}
+    if !value.is_object(){return Err("设置格式无效".into());}let mut out=defaults();for key in ["auto_start","show_taskbar","theme","notifications","notification_seconds","dock_hover_summary","dock_summary_mode"]{if let Some(value)=value.get(key){out[key]=value.clone();}}
+    if ["auto_start","show_taskbar","notifications","dock_hover_summary"].iter().any(|k|!out[k].is_boolean()){return Err("开关设置无效".into());}
+    if value.get("dock_summary_mode").is_none(){out["dock_summary_mode"]=json!(if out["dock_hover_summary"]==false{"never"}else{"hover"});}
+    if ![Some("always"),Some("hover"),Some("never")].contains(&out["dock_summary_mode"].as_str()){return Err("任务摘要显示模式无效".into());}
+    out["dock_hover_summary"]=json!(out["dock_summary_mode"]!="never");
     if ![Some("light"),Some("dark")].contains(&out["theme"].as_str()){return Err("主题设置无效".into());}
     if !out["notification_seconds"].as_u64().is_some_and(|n|(1..=30).contains(&n)){return Err("通知停留时间须为 1–30 秒".into());}Ok(out)
 }
@@ -38,6 +41,21 @@ mod tests {
         let _=user.delete_subkey_all(&path);assert!(result.is_ok());
     }
     #[test]
+    fn archived_completions_do_not_create_notifications(){
+        let mut detector=ChangeDetector::default();assert!(detector.update(&[]).is_empty());
+        assert!(detector.update(&[json!({"id":"archive:1","archived":true,"status":"completed","title":"旧任务","plan":[],"blockers":[]})]).is_empty());
+    }
+    #[test]
+    fn blocker_notices_are_sticky_until_resolved(){
+        let mut detector=ChangeDetector::default();
+        let mut task=json!({"id":"sticky","title":"卡点测试","status":"running","plan":[],"blockers":[]});
+        assert!(detector.update(&[task.clone()]).is_empty());
+        task["status"]=json!("blocked");task["blockers"]=json!([{"id":"b","title":"等待依赖","open":true}]);
+        let notices=detector.update(&[task.clone()]);assert_eq!(notices[0]["sticky"],true);assert_eq!(notices[0]["tab"],1);
+        task["status"]=json!("running");task["blockers"][0]["open"]=json!(false);
+        let notices=detector.update(&[task]);assert_eq!(notices[0]["sticky"],false);
+    }
+    #[test]
     fn secondary_snapshot_cannot_consume_main_notifications(){
         let root=std::env::temp_dir().join(format!("floatboard-notify-{}",uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&root).unwrap();
@@ -57,6 +75,9 @@ mod tests {
     }
 }
 pub fn save_options(root:&Path,gui:&Path,value:&Value)->Result<Value>{
+    if std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1") || std::env::args().any(|arg|arg=="--isolated-instance"){
+        let mut out=validate_options(value)?;if out["auto_start"]==true{return Err("隔离开发/测试实例不能设置系统开机启动".into());}out["startup_command"]=json!("");atomic_json(&root.join("preferences.json"),&out)?;return Ok(out);
+    }
     let previous=load_options(root);let mut out=validate_options(value)?;let desired=integration::command_line(&[crate::update_install::launch_entry(gui).to_string_lossy().into_owned(),"--data-dir".into(),root.to_string_lossy().into_owned()]);
     let changed=out["auto_start"]!=previous["auto_start"]||out["auto_start"]==true&&previous["startup_command"]!=desired;
     let old=if changed{startup(out["auto_start"]==true,&desired,previous["startup_command"].as_str().unwrap_or(""))?}else{None};
@@ -71,7 +92,7 @@ pub struct ChangeDetector{previous:Option<HashMap<String,Value>>}
 impl ChangeDetector{
     pub fn update(&mut self,tasks:&[Value])->Vec<Value>{
         let mut current=HashMap::new();let mut notices=Vec::new();
-        for task in tasks.iter().filter(|t|t["status"]!="unreported"||t["plan"].as_array().is_some_and(|p|!p.is_empty())){
+        for task in tasks.iter().filter(|t|t["archived"]!=true&&(t["status"]!="unreported"||t["plan"].as_array().is_some_and(|p|!p.is_empty()))){
             let id=task["id"].as_str().unwrap_or("").to_owned();let old=self.previous.as_ref().and_then(|p|p.get(&id));let mut lines=Vec::new();let mut tab=0;
             if self.previous.is_some(){
                 if old.is_none()||old.is_some_and(|o|terminal(o)&&!terminal(task)&&o["title"]!=task["title"]){lines.push(format!("新增任务 · {}",label(task["status"].as_str().unwrap_or(""))));if let Some(blockers)=task["blockers"].as_array(){for b in blockers.iter().filter(|b|b["open"]==true){lines.push(format!("新增卡点 · {}",b["title"].as_str().unwrap_or("")));tab=1;}}}
@@ -81,7 +102,7 @@ impl ChangeDetector{
                     if let Some(blockers)=task["blockers"].as_array(){for item in blockers{let previous=old["blockers"].as_array().and_then(|p|p.iter().find(|s|s["id"]==item["id"]));if previous.is_none()&&item["open"]==true||previous.is_some_and(|p|p["open"]!=item["open"]){let prefix=if previous.is_none(){"新增卡点"}else if item["open"]==true{"卡点待处理"}else{"卡点已解除"};lines.insert(0,format!("{prefix} · {}",item["title"].as_str().unwrap_or("")));tab=1;}}}
                     if let Some(blockers)=old["blockers"].as_array(){for item in blockers.iter().filter(|b|b["open"]==true){if !task["blockers"].as_array().is_some_and(|p|p.iter().any(|b|b["id"]==item["id"])){lines.insert(0,format!("卡点已解除 · {}",item["title"].as_str().unwrap_or("")));tab=1;}}}
                 }
-                if !lines.is_empty(){let remaining=lines.len().saturating_sub(3);lines.truncate(3);if remaining>0{lines.push(format!("另有 {remaining} 项变化"));}notices.push(json!({"task_id":id,"title":task["title"].as_str().filter(|s|!s.is_empty()).unwrap_or("任务更新"),"lines":lines,"tab":tab}));}
+                if !lines.is_empty(){let remaining=lines.len().saturating_sub(3);lines.truncate(3);if remaining>0{lines.push(format!("另有 {remaining} 项变化"));}notices.push(json!({"task_id":id,"title":task["title"].as_str().filter(|s|!s.is_empty()).unwrap_or("任务更新"),"lines":lines,"tab":tab,"sticky":task["blockers"].as_array().is_some_and(|items|items.iter().any(|item|item["open"]==true))}));}
             }
             current.insert(id,json!({"id":task["id"],"title":task["title"],"status":task["status"],"plan":task["plan"],"blockers":task["blockers"]}));
         }self.previous=Some(current);notices
@@ -128,7 +149,7 @@ impl Engine{
             if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}let tasks=self.store.as_mut().unwrap().tasks()?;
             let notices=if params["notify"]!=false{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
             let healthy=read_json(&self.root.join("health.json")).is_ok_and(|v|v["status"]=="ok"&&v["at"].as_f64().is_some_and(|at|(0.0..5.).contains(&(now()-at))));
-            if self.connection.is_none()||now()-self.checked_at>3.{let mut connection=crate::bridge::decorate_connection(&self.root,integration::connection_state(&self.root));if !healthy && connection["state"]=="sync_verified"{connection["state"]=json!("error");connection["diagnostics"]=json!(["同步曾验证，但当前采集器离线；请检查数据目录权限，稍后再检查连接。"]);}self.connection=Some(connection);self.checked_at=now();}
+            if self.connection.is_none()||now()-self.checked_at>3.{let mut connection=crate::bridge::decorate_connection(&self.root,integration::connection_state(&self.root));connection["codex_home"]=json!(integration::codex_home());connection["isolated"]=json!(std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1"));connection["codex_mode"]=json!(std::env::var("FLOATBOARD_CODEX_MODE").unwrap_or_else(|_|"isolated".into()));if !healthy && connection["state"]=="sync_verified"{connection["state"]=json!("error");connection["diagnostics"]=json!(["同步曾验证，但当前采集器离线；请检查数据目录权限，稍后再检查连接。"]);}self.connection=Some(connection);self.checked_at=now();}
             Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"connection":self.connection,"data_location":self.data_location(),"restart_required":self.restart_required,"now":now()}))
         },
         "preferences"=>save_options(&self.root,&self.gui,&params),
@@ -136,8 +157,8 @@ impl Engine{
         "connect"=>{let result=integration::connect_with_recovery(&self.root,params["confirm_recovery"]==true)?;self.connection=None;Ok(result)},
         "connect_request"=>Ok(json!(format!("请帮我接入当前 Windows 用户的 Codex 任务看板，保留其他配置和正常 Hook 信任流程。请执行：{}",integration::command_line(&[crate::runtime::reporter_path()?.to_string_lossy().into_owned(),"--connect".into(),"--data-dir".into(),self.root.to_string_lossy().into_owned()])))),
         "disconnect"=>{let plan=integration::preview(&self.root,true)?;let changed=integration::apply(&self.root,&plan)?;self.connection=None;Ok(json!({"success":true,"changed":changed}))},
-        "window_load"=>Ok(read_json(&self.root.join("window.json")).ok().filter(|v|v.is_object()).unwrap_or(json!({}))),
-        "window_save"=>{let mut old=self.call_inner("window_load",json!({}))?;for key in ["x","y","width","height","pinned","selected","tab","filter"]{if let Some(value)=params.get(key){let valid=match key{"pinned"=>value.is_boolean(),"selected"|"filter"=>value.as_str().is_some_and(|s|s.len()<=500),"tab"=>value.as_u64().is_some_and(|n|n<=3),"width"=>value.as_f64().is_some_and(|n|(392.0..=100000.).contains(&n)),"height"=>value.as_f64().is_some_and(|n|(570.0..=100000.).contains(&n)),_=>value.as_f64().is_some_and(|n|n.is_finite()&&n.abs()<=100000.)};if !valid{return Err("窗口设置无效".into());}old[key]=value.clone();}}atomic_json(&self.root.join("window.json"),&old)?;Ok(json!(true))},
+        "window_load"=>{let mut state=read_json(&self.root.join("window.json")).ok().filter(|v|v.is_object()).unwrap_or(json!({}));if state.get("tab").is_some_and(|v|!v.as_u64().is_some_and(|n|n<=2)){state["tab"]=json!(0);}Ok(state)},
+        "window_save"=>{let mut old=self.call_inner("window_load",json!({}))?;for key in ["x","y","width","height","pinned","selected","tab","filter","details_collapsed"]{if let Some(value)=params.get(key){let valid=match key{"pinned"|"details_collapsed"=>value.is_boolean(),"selected"|"filter"=>value.as_str().is_some_and(|s|s.len()<=500),"tab"=>value.as_u64().is_some_and(|n|n<=2),"width"=>value.as_f64().is_some_and(|n|(392.0..=100000.).contains(&n)),"height"=>value.as_f64().is_some_and(|n|(570.0..=100000.).contains(&n)),_=>value.as_f64().is_some_and(|n|n.is_finite()&&n.abs()<=100000.)};if !valid{return Err("窗口设置无效".into());}old[key]=value.clone();}}atomic_json(&self.root.join("window.json"),&old)?;Ok(json!(true))},
         _=>Err("未知看板操作".into())
     }}
 }

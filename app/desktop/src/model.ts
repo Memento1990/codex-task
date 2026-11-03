@@ -1,27 +1,53 @@
 export type Timer = { started_at: number | null; ended_at: number | null; seconds: number; since: number | null; partial: boolean } | null;
 export type Step = { id: string; title: string; status: string; note: string; timing?: Timer };
 export type Blocker = { id: string; title: string; open: boolean; reason: string; impact: string; owner: string; resolve_when: string; timing?: Timer };
-export type Task = { id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: { label: string; reference: string }[]; history: { kind: string; at: number; tool: string; status: string; agent_id: string }[]; timing?: Timer };
-export type Options = { auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
-export type Notice = { task_id: string; title: string; lines: string[]; tab: number };
-export type Connection = { state: string; config_state?: string; error?: string; diagnostics?: unknown; recovery_required?: boolean; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean; runtime_update_available?: boolean; mcp_connected?: boolean };
+export type Task = { archived?:boolean; source_task_id?:string; id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: { label: string; reference: string }[]; timing?: Timer };
+export type DockSummaryMode = 'always'|'hover'|'never';
+export const dockSummaryMode = (options: {dock_summary_mode?:unknown;dock_hover_summary?:boolean}): DockSummaryMode => ['always','hover','never'].includes(String(options.dock_summary_mode)) ? options.dock_summary_mode as DockSummaryMode : options.dock_hover_summary === false ? 'never' : 'hover';
+export const dockSummaryVisible = (mode: DockSummaryMode, hovered: boolean): boolean => mode === 'always' || mode === 'hover' && hovered;
+export type Options = { dock_summary_mode?: DockSummaryMode; dock_hover_summary?: boolean; auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
+export type Notice = { task_id: string; title: string; lines: string[]; tab: number; sticky?: boolean };
+export const normalizeTab = (value: unknown): number => value === 1 || value === 2 ? value : 0;
+export const isReportedTask = (task: Task): boolean => task.status !== 'unreported' || task.plan.length > 0;
+export const taskTitle = (task: Task): string => task.title || (task.plan.length ? '已同步计划' : '等待结构化汇报');
+export const isBlockerNotice = (notice: Notice): boolean => notice.tab === 1;
+export const dragThresholdReached = (x:number,y:number,nextX:number,nextY:number,buttons:number): boolean => (buttons & 1) === 1 && Math.hypot(nextX-x,nextY-y) >= 4;
+export const noticeAutoDismiss = (notice: Notice): boolean => notice.sticky !== true;
+export type Connection = { codex_home?:string;codex_mode?:'local'|'isolated';isolated?:boolean;state: string; config_state?: string; error?: string; diagnostics?: unknown; recovery_required?: boolean; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean; runtime_update_available?: boolean; mcp_connected?: boolean; mcp_connected_at?:number|null; session_received_at?:number|null; sync_verified_at?:number|null };
+export function connectionTone(connection:Connection):'confirmed'|'neutral'|'problem' {
+  if(['conflict','partial','error','recovery_required'].includes(connection.state)||connection.config_state==='partial'||connection.config_state==='error')return 'problem';
+  if(['session_received','sync_verified'].includes(connection.state)||connection.mcp_connected===true)return 'confirmed';
+  return 'neutral';
+}
+export function evidenceTime(value:number|null|undefined):string {
+  return typeof value==='number'&&Number.isFinite(value)&&value>0?new Date(value*1000).toLocaleString('zh-CN',{hour12:false}):'未提供证据时间';
+}
 export type IntegrationStep = { title:string; description:string; action:'connect'|'recover'|'check'|'details'|'done'; button:string; stage:number; verified:boolean };
 export function integrationStep(connection: Connection): IntegrationStep {
   const step=(title:string,description:string,action:IntegrationStep['action'],button:string,stage:number,verified=false):IntegrationStep=>({title,description,action,button,stage,verified});
+  if(connection.config_state==='partial')return step('配置需要检查','接入配置部分缺失，请查看差异与诊断。不会把连接待确认当作配置完整，也不会自动覆盖配置。','details','查看配置问题',0);
+  if(connection.config_state==='error')return step('配置需要检查','配置读取或校验失败，请先查看诊断。已有回执不能代替配置校验。','details','查看配置问题',0);
   switch(connection.state){
-    case 'missing': return step('连接你的 Codex','看板会在当前用户目录安装小型连接程序，并配置 Codex 接入。不需要管理员权限，也不会修改项目。','connect','连接 Codex',0);
+    case 'missing': return step('尚未配置','看板会在当前用户目录安装小型连接程序，并配置 Codex 接入。不需要管理员权限，也不会修改项目。','connect','连接 Codex',0);
     case 'recovery_required': return step('发现旧版连接','先查看将恢复的配置，再确认恢复连接。未确认前不会接管或覆盖旧配置。','recover','查看并恢复连接',0);
     case 'conflict': return step('连接配置需要确认','发现不能安全接管的配置。看板未覆盖或追加重复配置，请先查看诊断中的冲突项。','details','查看冲突详情',0);
-    case 'awaiting_reload': return step('配置已准备，等待 Codex 载入','如 Codex 原生界面提示，请确认启用与信任。方便时使用其重载功能，或完整退出并重启 Codex Desktop；仅新建标签页可能复用旧进程。可以稍后完成，不会终止正在进行的任务。','check','检查连接',1);
-    case 'awaiting_session': return step('等待当前 Codex 会话','连接配置已就绪。请在已载入连接的 Codex 中开始或继续会话，看板会自动验证；没有业务任务并不代表失败。','check','检查连接',2);
-    case 'session_received': return step('已收到当前会话','当前会话已到达，尚未验证任务进度同步。正常使用 Codex，收到真实结构化任务汇报后将自动完成验证。','check','检查同步',2);
-    case 'sync_verified': return step('任务同步已验证','已收到当前连接的真实任务汇报。之后任务变化会自动显示在看板。','done','完成',3,true);
+    case 'awaiting_reload':
+    case 'awaiting_session':
+    case 'ready':
+    case 'configured': return connection.mcp_connected
+      ?step('连接已确认 · 等待会话事件','Codex 曾加载此连接组件，尚未观察到本次接入的会话事件。空闲不算异常；请在 Codex 新建或继续真实会话，再刷新状态。','check','刷新状态',2)
+      :step('配置完成 · 连接待确认','本工具配置已写入，尚未收到 Codex 回执；这不代表未授权。若已在 Codex 授权，请新建或继续一次真实会话，再刷新状态。可以稍后完成，无需反复授权或强制重启。','check','刷新状态',1);
+    case 'partial': return step('配置需要检查','接入配置部分缺失，请查看差异与诊断。现有证据不能代替完整配置检查。','details','查看配置问题',0);
+    case 'session_received': return step('会话事件已收到','会话事件链路已确认；任务同步尚未验证，不代表未接入。正常使用 Codex，真实任务汇报到达后将继续验证。','check','刷新状态',2);
+    case 'sync_verified': return step('接入与任务同步已验证','已收到真实任务汇报，最近证据时间见下方。该回执不代表 Codex 此刻实时在线。','done','完成',3,true);
     case 'error': return step('暂时无法验证连接','查看诊断以确认原因。检查只读取当前状态，不会重写配置，也不会停止 Codex。','check','重新检查',0);
     default: return step('连接尚待验证','当前状态尚未得到完整验证。可检查连接或查看高级诊断；历史记录不代表当前连接已同步。','check','检查连接',1);
   }
 }
 export function connectionStatus(connection: Connection): string {
-  return ({missing:'尚未接入',recovery_required:'旧连接待恢复',conflict:'接入冲突',awaiting_reload:'等待载入连接',awaiting_session:'等待当前会话',session_received:'已收到当前会话',sync_verified:'同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
+  if(['partial','error'].includes(connection.config_state || ''))return '配置需要检查';
+  if(['ready','configured','awaiting_reload','awaiting_session'].includes(connection.state))return connection.mcp_connected?'连接已确认 · 待会话':'配置完成 · 连接待确认';
+  return ({missing:'尚未配置',recovery_required:'旧连接待恢复',conflict:'配置需要检查',partial:'配置需要检查',session_received:'会话事件已收到',sync_verified:'接入与同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
 }
 export type Snapshot = { tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
 export type DataLocation = { current: string; restart_required: boolean };
@@ -56,7 +82,11 @@ export function createTestNoticeFactory() {
   return (options: Options): Notice & {seconds:number;theme:string} => ({task_id:`settings-preview-${++sequence}`,title:'消息通知预览',lines:['任务或清单变化时，在这里提醒。'],tab:0,seconds:options.notification_seconds,theme:options.theme});
 }
 export function noticeStack<T extends Notice>(items: T[], item: T): T[] {
-  return [...items.filter(previous => previous.task_id !== item.task_id), item].slice(-4);
+  const previous = items.find(notice => notice.task_id === item.task_id);
+  const merged = previous?.sticky && !item.sticky ? {...item, sticky:true} : item;
+  const next = [...items.filter(notice => notice.task_id !== item.task_id), merged];
+  const ordinary = next.filter(noticeAutoDismiss).slice(-4);
+  return next.filter(notice => !noticeAutoDismiss(notice) || ordinary.includes(notice));
 }
 export function diagnosticText(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -64,10 +94,9 @@ export function diagnosticText(value: unknown): string {
   if (Array.isArray(value)) return value.map(diagnosticText).filter(Boolean).join('\n');
   return JSON.stringify(value, null, 2);
 }
-export const defaults: Options = { auto_start: false, show_taskbar: false, theme: 'light', notifications: true, notification_seconds: 3 };
+export const defaults: Options = { dock_summary_mode: 'hover', dock_hover_summary: true, auto_start: false, show_taskbar: false, theme: 'light', notifications: true, notification_seconds: 3 };
 export const status: Record<string,string> = { running: '执行中', blocked: '有卡点', waiting: '待确认', completed: '已完成', cancelled: '已取消', unreported: '未汇报', pending: '待执行', inProgress: '进行中' };
 export const runtime: Record<string,string> = { active: '运行中', idle: '本轮结束', interrupted: '已中断', waiting_approval: '等待审批', unknown: '未知' };
-export const kinds: Record<string,string> = { SessionStart: '会话开始', UserPromptSubmit: '收到新请求', PreToolUse: '调用工具', PostToolUse: '工具返回', Stop: '本轮结束', SessionEnd: '会话结束', PermissionRequest: '请求审批', Interrupt: '执行中断', progress: '更新进度', plan: '更新计划', SubagentStart: '子任务开始', SubagentStop: '子任务结束' };
 export const openBlockers = (task: Task) => task.blockers.filter(item => item.open);
 export const done = (task: Task) => task.plan.filter(item => item.status === 'completed').length;
 export function elapsed(timer: Timer | undefined, now: number): string {
@@ -78,8 +107,20 @@ export function elapsed(timer: Timer | undefined, now: number): string {
   const value = d ? `${d} 天${h ? ` ${h} 小时` : ''}` : h ? `${h} 小时${m ? ` ${m} 分` : ''}` : m ? `${m} 分${s ? ` ${s} 秒` : ''}` : `${s} 秒`;
   return (timer.partial ? '已记录 ' : '') + value;
 }
+export function dockSummary(tasks: Task[], selected: string) {
+  const reported = tasks.filter(task => !task.archived && isReportedTask(task));
+  const active = reported.filter(task => !['completed','cancelled'].includes(task.status));
+  const task = active.find(task => task.id === selected) || active.find(task => openBlockers(task).length > 0) || active[0];
+  const blockers = reported.reduce((sum, task) => sum + openBlockers(task).length, 0);
+  const allCompleted = reported.length > 0 && reported.every(task => task.status === 'completed');
+  const total = task?.plan.length || 0, completed = task ? done(task) : 0;
+  return {task, blockers, active:active.length, allCompleted, total, completed, progress:total ? completed / total : null,
+    title:task ? taskTitle(task) : allCompleted ? '所有任务已完成' : '暂无进行中的任务',
+    badge:blockers ? `! ${blockers}` : allCompleted ? '✓' : total ? `${completed}/${total}` : '—',
+    step:task?.current_step || task?.plan.find(step => step.status === 'inProgress')?.title || (total ? '等待下一步进展' : '暂无可计算进度')};
+}
 export function visibleTasks(tasks: Task[], filter: string): Task[] {
-  return tasks.filter(task => task.status !== 'completed' && (filter === 'all' || filter === 'blocked' && openBlockers(task).length > 0 || filter === 'running' && task.status === 'running'));
+  return tasks.filter(task => isReportedTask(task) && task.status !== 'completed' && (filter === 'all' || filter === 'blocked' && openBlockers(task).length > 0 || filter === 'running' && task.status === 'running'));
 }
 export function safeReference(value: string): boolean {
   if (/^(?:[A-Z]:[\\/])[^\r\n]+\.(?:md|txt|json|log|csv|png|jpe?g|webp|pdf|html)$/i.test(value)) return true;

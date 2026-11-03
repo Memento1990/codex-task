@@ -20,9 +20,28 @@ fn real_utf8_hook_and_mcp_roundtrip(){
 #[test]
 fn worker_singleton_restart_and_backlog(){
     let temp=Temp::new();let first=worker(&temp.0);wait(||temp.0.join("health.json").exists());let mut second=worker(&temp.0);wait(||second.0.try_wait().unwrap().is_some());assert!(second.0.wait().unwrap().success());drop(first);
+    store::enqueue(&temp.0,json!({"kind":"progress","session_id":"offline","host_id":"synthetic","report":{"revision":0,"title":"后台积压任务","status":"running","plan":[],"blockers":[],"evidence":[]}})).unwrap();
     store::enqueue(&temp.0,json!({"kind":"Stop","session_id":"offline","host_id":"synthetic"})).unwrap();let third=worker(&temp.0);
     wait(||Store::open(&temp.0,true).and_then(|mut store|store.tasks()).is_ok_and(|tasks|tasks.first().is_some_and(|t|t["runtime"]=="idle")));
     assert_eq!(store::read_json(&temp.0.join("health.json")).unwrap()["implementation"],"rust");drop(third);
+}
+#[test]
+fn collector_cooperative_upgrade_preserves_queue_and_completion_episodes(){
+    let temp=Temp::new();
+    let legacy=std::env::var_os("FLOATBOARD_TEST_LEGACY_REPORTER");
+    let mut old=if let Some(exe)=legacy.as_ref(){Worker(Command::new(exe).arg("--worker").arg("--data-dir").arg(&temp.0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap())}else{worker(&temp.0)};
+    wait(||temp.0.join("health.json").exists());
+    if legacy.is_none(){let mut h=store::read_json(&temp.0.join("health.json")).unwrap();h["version"]=json!("0.9.0");store::atomic_json(&temp.0.join("health.json"),&h).unwrap();}
+    // Legacy launchers ignore the new upgrade lock; compete throughout handoff.
+    let racers=legacy.map(|exe|{let root=temp.0.clone();std::thread::spawn(move||{for _ in 0..20{let status=Command::new(&exe).arg("--worker").arg("--data-dir").arg(&root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();assert!(status.success());}})});
+    runtime::spawn_worker(&temp.0).unwrap();wait(||old.0.try_wait().unwrap().is_some());assert!(old.0.wait().unwrap().success());
+    if let Some(racers)=racers{racers.join().unwrap();}
+    for (revision,status) in [(0,"completed"),(1,"running")] {
+        store::enqueue(&temp.0,json!({"kind":"progress","session_id":"upgrade","host_id":"fixture","report":{"revision":revision,"title":format!("task-{revision}"),"status":status,"plan":[{"id":"s","title":"step","status":if status=="completed"{"completed"}else{"inProgress"}}],"evidence":["fixture proof"],"blockers":[]}})).unwrap();
+    }
+    wait(||Store::open(&temp.0,true).and_then(|mut s|s.tasks()).is_ok_and(|tasks|tasks.len()==2));
+    store::atomic_json(&temp.0.join("worker-shutdown.json"),&json!({})).unwrap();
+    wait(||runtime::ProcessLock::acquire(&temp.0.join("collector.lock")).is_ok());
 }
 #[test]
 fn malformed_hook_and_oversized_mcp_fail_open(){

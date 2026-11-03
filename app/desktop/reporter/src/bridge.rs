@@ -65,6 +65,16 @@ pub fn run()->Result<i32>{
     let bytes=fs::read(&payload).map_err(|_|"连接运行时缺失，请在看板中修复连接")?;
     if hash(&bytes)!=active["sha256"].as_str().unwrap_or(""){return Err("连接运行时校验失败".into());}
     let selected=PathBuf::from(active["data_root"].as_str().ok_or("连接数据位置无效")?);
+    // Local Codex launches the DEV bridge with its normal environment. Restore
+    // only this verified runtime's data/control scope, never production roots.
+    if crate::integration::server_name(&selected)=="codex_floatboard_dev" {
+        let local=base.parent().and_then(Path::parent).and_then(Path::parent).ok_or("DEV连接目录结构无效")?;
+        if identity(&local.join("CodexFloatboard/data"))!=identity(&selected){return Err("DEV连接数据范围无效".into());}
+        std::env::set_var("LOCALAPPDATA",local);
+        std::env::set_var("CODEX_FLOATBOARD_DATA",&selected);
+        std::env::set_var("FLOATBOARD_DEVELOPMENT","1");
+        std::env::set_var("FLOATBOARD_DEV_ISOLATED","1");
+    }
     let root=crate::migration::resolve_root(&selected)?;
     let args:Vec<String>=std::env::args().skip(1).collect();
     // The stable config owns data selection; callers cannot redirect this bridge.
@@ -89,7 +99,6 @@ pub fn decorate_connection(root:&Path,mut state:Value)->Value{
     if state["recovery_required"]==true{state["state"]=json!("recovery_required");return state;}
     if config=="error"{state["state"]=json!("conflict");return state;}
     if config=="missing"{state["state"]=json!("missing");return state;}
-    if state["hook_error"]==true {state["state"]=json!("error");return state;}
     let receipt=read_json(&receipt_path(root)).unwrap_or(json!({}));
     let generation=generation(root);let since=receipt["connected_at"].as_f64().unwrap_or(f64::INFINITY);
     // GUI updates do not replace active Codex clients. Evidence belongs to the
@@ -99,11 +108,18 @@ pub fn decorate_connection(root:&Path,mut state:Value)->Value{
     let fresh=|kind:&str|->Option<Value>{read_json(&root.join(format!("connection-{kind}.json"))).ok().filter(|v|!generation.is_empty()&&v["generation"]==generation&&v["version"]==connected_version&&v["at"].as_f64().is_some_and(|at|at>=since&&at<=crate::now()+5.))};
     let mcp=fresh("mcp");let hook=fresh("hook");let report=fresh("report");let consumed=fresh("consumed");
     state["mcp_connected"]=json!(mcp.is_some());state["hook_seen"]=json!(hook.is_some());
-    state["diagnostics"]=json!(if state["upgrade_available"]==true{vec!["发现旧版连接，可在高级选项升级；不会结束当前 Codex 会话。"]}else if hook.is_some(){vec!["已收到当前连接的会话事件；任务汇报入库后才完成同步验证。"]}else if mcp.is_some(){vec!["当前连接组件已由 Codex 初始化，等待真实会话事件。"]}else{vec!["配置就绪不代表 Codex 已载入。请按原生提示确认信任，方便时重载或完整重启 Codex。"]});
+    state["mcp_connected_at"]=mcp.as_ref().map(|v|v["at"].clone()).unwrap_or(Value::Null);
+    state["session_received_at"]=hook.as_ref().map(|v|v["at"].clone()).unwrap_or(Value::Null);
+    state["authorization_state"]=json!("not_observable");
+    let mut diagnostics=vec![if hook.is_some(){"已收到本次接入的会话事件；尚无任务汇报不代表未接入。"}else if mcp.is_some(){"已收到 Codex 初始化回执，等待真实会话事件；这不是实时心跳。"}else{"配置已写入，尚未收到 Codex 连接回执；这不代表未授权。若已授权，可在 Codex 新建或继续一次会话，再刷新状态。"}];
+    if state["upgrade_available"]==true{diagnostics.push("接入配置有可选更新，请预览后确认升级；不影响展示已有连接证据。");}
+    if state["hook_error"]==true{diagnostics.push("存在历史 Hook 错误记录，请查看诊断；该记录不能否定较新的有效连接回执。");}
+    state["diagnostics"]=json!(diagnostics);
     let persisted=report.as_ref().and_then(|r|r["event_id"].as_str()).is_some_and(|id|{
         rusqlite::Connection::open_with_flags(root.join("events.sqlite3"),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok().is_some_and(|db|db.query_row("select exists(select 1 from events where id=?1 and kind='progress')",[id],|row|row.get::<_,bool>(0)).unwrap_or(false))
     });
     let verified=hook.as_ref().zip(report.as_ref()).is_some_and(|(h,r)|h["session"]==r["session"]&&(persisted||consumed.as_ref().is_some_and(|c|r["session"]==c["session"]&&r["event_id"].is_string()&&r["event_id"]==c["event_id"])));
-    state["state"]=json!(if state["upgrade_available"]==true||config=="partial"{"awaiting_reload"}else if verified&&mcp.is_some(){"sync_verified"}else if hook.is_some(){"session_received"}else if mcp.is_some(){"awaiting_session"}else{"awaiting_reload"});
+    state["sync_verified_at"]=if verified&&mcp.is_some(){report.as_ref().map(|v|v["at"].clone()).unwrap_or(Value::Null)}else{Value::Null};
+    state["state"]=json!(if config=="partial"{"awaiting_reload"}else if verified&&mcp.is_some(){"sync_verified"}else if hook.is_some(){"session_received"}else if mcp.is_some(){"awaiting_session"}else{"awaiting_reload"});
     state
 }
