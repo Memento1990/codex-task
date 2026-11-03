@@ -75,6 +75,14 @@ fn concurrent_migration_and_producer_fail_closed(){
     assert!(migration::with_root(&old,|_|Ok(())).is_err());
 }
 #[test]
+fn in_flight_notification_blocks_migration_before_copy(){
+    let test=Sandbox::new();let old=test.path("old");let new=test.path("new");seed(&old);
+    let _sending=ProcessLock::acquire(&old.join("notification-activity.lock")).unwrap();
+    let error=migration::migrate(&old,&new).unwrap_err();
+    assert!(error.contains("通知正在发送"));assert!(!new.exists());
+    assert!(!old.join(migration::REDIRECT).exists());assert!(!old.join(migration::STOP).exists());
+}
+#[test]
 fn real_process_handoff_preserves_pid_and_origin_collector_ownership(){
     let test=Sandbox::new();let old=test.path("old");let new=test.path("new");seed(&old);
     floatboard_core::runtime::spawn_worker(&old).unwrap();

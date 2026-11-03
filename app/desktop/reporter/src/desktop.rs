@@ -108,9 +108,10 @@ impl ChangeDetector{
         }self.previous=Some(current);notices
     }
 }
-pub struct Engine{pub root:PathBuf,gui:PathBuf,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool}
+pub struct Engine{pub root:PathBuf,gui:PathBuf,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,notifications:Option<crate::notifications::NotificationService>}
 impl Engine{
-    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false}}
+    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false,notifications:None}}
+    pub fn start_notifications(&mut self){if !self.restart_required && self.notifications.is_none(){self.notifications=Some(crate::notifications::NotificationService::new(self.root.clone()));}}
     pub fn data_location(&self)->Value{crate::migration::location(&self.root,self.restart_required)}
     pub fn migrate_data(&mut self,path:&Path)->Result<Value>{
         if self.restart_required{return Err("数据目录已切换，请先重启看板".into());}
@@ -121,6 +122,7 @@ impl Engine{
                 return Err("请先用新版重新连接 Codex，完整重启 Codex 后再迁移".into());
             }
         }
+        if let Some(service)=self.notifications.take(){service.shutdown();}
         self.store=None;
         let previous=self.root.clone();
         let destination=match crate::migration::migrate(&self.root,path){
@@ -133,20 +135,21 @@ impl Engine{
     }
     pub fn call(&mut self,method:&str,params:Value)->Result<Value>{
         let current=crate::migration::resolve_root(&self.root)?;
-        if current!=self.root{self.store=None;self.root=current;self.restart_required=true;self.connection=None;}
+        if current!=self.root{if let Some(service)=self.notifications.take(){service.shutdown();}self.store=None;self.root=current;self.restart_required=true;self.connection=None;}
         if method=="data_location"{return Ok(self.data_location());}
         if method=="migrate_data"{if params["producers_stopped"]!=true{return Err("迁移前必须退出全部 Codex 会话及其他看板，确认已暂停上报".into());}return self.migrate_data(Path::new(params["path"].as_str().filter(|p|!p.is_empty()).ok_or("请选择新的数据目录")?));}
         if self.restart_required && !["snapshot","window_load"].contains(&method){return Err("数据目录已切换，请先重启看板".into());}
-        if !["preferences","window_save"].contains(&method){return self.call_inner(method,params);}
+        if !["preferences","window_save"].contains(&method) && !method.starts_with("notification_"){ return self.call_inner(method,params);}
         let root=self.root.clone();
         crate::migration::with_root(&root,|resolved|{
-            if resolved!=self.root{self.store=None;self.root=resolved.to_path_buf();self.restart_required=true;self.connection=None;return Err("数据目录已切换，请重启看板".into());}
+            if resolved!=self.root{if let Some(service)=self.notifications.take(){service.shutdown();}self.store=None;self.root=resolved.to_path_buf();self.restart_required=true;self.connection=None;return Err("数据目录已切换，请重启看板".into());}
             self.call_inner(method,params)
         })
     }
     fn call_inner(&mut self,method:&str,params:Value)->Result<Value>{match method{
         "snapshot"=>{
             if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}let tasks=self.store.as_mut().unwrap().tasks()?;
+            if params["notify"]!=false {self.start_notifications();}
             let notices=if params["notify"]!=false{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
             let healthy=read_json(&self.root.join("health.json")).is_ok_and(|v|v["status"]=="ok"&&v["at"].as_f64().is_some_and(|at|(0.0..5.).contains(&(now()-at))));
             if self.connection.is_none()||now()-self.checked_at>3.{let mut connection=crate::bridge::decorate_connection(&self.root,integration::connection_state(&self.root));connection["codex_home"]=json!(integration::codex_home());connection["isolated"]=json!(std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1"));connection["codex_mode"]=json!(std::env::var("FLOATBOARD_CODEX_MODE").unwrap_or_else(|_|"isolated".into()));if !healthy && connection["state"]=="sync_verified"{connection["state"]=json!("error");connection["diagnostics"]=json!(["同步曾验证，但当前采集器离线；请检查数据目录权限，稍后再检查连接。"]);}self.connection=Some(connection);self.checked_at=now();}
@@ -159,6 +162,10 @@ impl Engine{
         "disconnect"=>{let plan=integration::preview(&self.root,true)?;let changed=integration::apply(&self.root,&plan)?;self.connection=None;Ok(json!({"success":true,"changed":changed}))},
         "window_load"=>{let mut state=read_json(&self.root.join("window.json")).ok().filter(|v|v.is_object()).unwrap_or(json!({}));if state.get("tab").is_some_and(|v|!v.as_u64().is_some_and(|n|n<=2)){state["tab"]=json!(0);}Ok(state)},
         "window_save"=>{let mut old=self.call_inner("window_load",json!({}))?;for key in ["x","y","width","height","pinned","selected","tab","filter","details_collapsed"]{if let Some(value)=params.get(key){let valid=match key{"pinned"|"details_collapsed"=>value.is_boolean(),"selected"|"filter"=>value.as_str().is_some_and(|s|s.len()<=500),"tab"=>value.as_u64().is_some_and(|n|n<=2),"width"=>value.as_f64().is_some_and(|n|(392.0..=100000.).contains(&n)),"height"=>value.as_f64().is_some_and(|n|(570.0..=100000.).contains(&n)),_=>value.as_f64().is_some_and(|n|n.is_finite()&&n.abs()<=100000.)};if !valid{return Err("窗口设置无效".into());}old[key]=value.clone();}}atomic_json(&self.root.join("window.json"),&old)?;Ok(json!(true))},
+        "notification_snapshot"|"notification_save"|"notification_channel_save"|"notification_channel_delete"|"notification_test"|"notification_retry"|"notification_clear"=>{
+            let service=self.notifications.get_or_insert_with(||crate::notifications::NotificationService::new(self.root.clone()));
+            service.call(method,params)
+        },
         _=>Err("未知看板操作".into())
     }}
 }

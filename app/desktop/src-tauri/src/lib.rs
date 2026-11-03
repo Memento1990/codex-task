@@ -33,7 +33,7 @@ fn show_main(app:&tauri::AppHandle) { dock::restore(app); if let Some(w)=app.get
 
 #[tauri::command]
 async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, method:String, mut params:Value)->Result<Value,String> {
-    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data"];
+    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data","notification_snapshot","notification_save","notification_channel_save","notification_channel_delete","notification_test","notification_retry","notification_clear"];
     if !allowed.contains(&method.as_str()) || window.label()!="main" && method!="snapshot" { return Err("此窗口不允许该操作".into()); }
     if window.label()!="main" { params["notify"]=json!(false); }
     let worker=state.engine.clone();
@@ -153,6 +153,7 @@ pub fn run() {
     let _=floatboard_core::runtime::spawn_worker(&root);
     let mut adapter=Engine::new(root.clone(),current);
     let stored=adapter.call("window_load",json!({})).unwrap_or(json!({}));
+    adapter.start_notifications();
     let options=floatboard_core::desktop::load_options(&root);
     let worker=Arc::new(Mutex::new(adapter));
     let updates=floatboard_core::update::UpdateService::new(root.clone());

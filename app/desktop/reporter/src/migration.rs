@@ -131,6 +131,9 @@ pub fn migrate(root: &Path, destination: &Path) -> Result<PathBuf> {
     }
     check_tree(&root)?;
     let _migration=ProcessLock::acquire(&root.join(LOCK)).map_err(|_| "数据目录正在迁移，请稍后重试")?;
+    // Never copy an in-flight notification claim: another GUI may still be
+    // posting outside its Engine mutex. Do not wait while holding migration.lock.
+    let _notifications=ProcessLock::acquire(&root.join("notification-activity.lock")).map_err(|_| "通知正在发送或检查，请稍后重试迁移")?;
     // Integration receipts and backups must not change under the copy.
     let _integration=ProcessLock::acquire(&root.join("integration.lock")).map_err(|_| "接入操作正在进行，请稍后迁移")?;
     // Start a cooperative collector even when idle: it must retain the source

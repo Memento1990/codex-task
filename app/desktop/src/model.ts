@@ -22,6 +22,7 @@ export function connectionTone(connection:Connection):'confirmed'|'neutral'|'pro
 export function evidenceTime(value:number|null|undefined):string {
   return typeof value==='number'&&Number.isFinite(value)&&value>0?new Date(value*1000).toLocaleString('zh-CN',{hour12:false}):'未提供证据时间';
 }
+export const runningTaskSyncPrompt = '请将本会话正在进行的任务同步到 Codex 任务侧窗。仅使用本会话 Hook 提供的绑定信息和对应连接的 report_progress，基于当前可确认上下文汇报任务标题、完整步骤及状态、当前步骤、开放卡点和已有验收证据。这是接入后的当前快照，不补造历史、计时或证据。保持原任务继续执行，不因汇报创建子 Agent。若工具或有效绑定不可用，请说明尚未载入，不要猜会话 ID/token、手动调用 hook_context、修改配置或中断任务。';
 export type IntegrationStep = { title:string; description:string; action:'connect'|'recover'|'check'|'details'|'done'; button:string; stage:number; verified:boolean };
 export function integrationStep(connection: Connection): IntegrationStep {
   const step=(title:string,description:string,action:IntegrationStep['action'],button:string,stage:number,verified=false):IntegrationStep=>({title,description,action,button,stage,verified});

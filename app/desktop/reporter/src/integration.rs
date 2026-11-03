@@ -217,7 +217,7 @@ pub fn connection_state(root:&Path)->Value{
     match preview(root,false){
         Ok(p)=>{
             let mut diagnostics=Vec::new();
-            if p.present==10&&!hook_seen { diagnostics.push("接入配置已写入，但尚未收到生命周期 Hook。请完整退出并重启 Codex Desktop（仅新建标签页可能仍复用旧 app-server），再按 Codex 的 Hook 管理界面确认启用与信任。".to_string()); }
+            if p.present==10&&!hook_seen { diagnostics.push("接入配置已写入，但尚未收到生命周期 Hook。请在 Codex 确认启用与信任，并按客户端能力正常重载连接；仅新建标签页可能仍复用旧 app-server。若当前任务正在执行，可稍后处理，不要强制退出。连接载入后可在原会话发送同步指令。".to_string()); }
             if hook_error { diagnostics.push("Reporter 收到过 Hook，但登记或落盘失败。请检查数据目录可写性，或等待迁移完成后重试；原始输入未保存。".to_string()); }
             if hook_seen { diagnostics.push("已收到 Hook；若任务仍显示未汇报，请确认当前会话已加载 report_progress 工具并执行结构化进度汇报。简短问答可以不创建清单。".to_string()); }
             if p.changed&&p.present>0 {diagnostics.push("当前配置仍引用先前的 Reporter；请重新检查连接，完成正常 Hook 信任并重新加载 Codex。".to_string());}

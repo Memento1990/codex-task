@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+import { runningTaskSyncPrompt, isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+test('running task sync asks for a bound current snapshot without fabricated history',()=>{
+  for(const text of ['本会话 Hook','report_progress','当前快照','不补造历史','不要猜会话 ID/token','中断任务'])assert.ok(runningTaskSyncPrompt.includes(text));
+});
 test('blocker reminder styling is independent from sticky persistence',()=>{
   const notice:Notice={task_id:'a',title:'Notice',lines:[],tab:0,sticky:true};
   assert.equal(isBlockerNotice(notice),false);assert.equal(noticeAutoDismiss(notice),false);

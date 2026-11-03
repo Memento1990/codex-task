@@ -2,9 +2,10 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { action, native } from './host';
+  import { appVersion } from './version';
   import { safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot } from './model';
   let {visible=false, compact=false, blocked=false, onbusy=(_value:boolean)=>{}}:{visible?:boolean;compact?:boolean;blocked?:boolean;onbusy?:(value:boolean)=>void}=$props();
-  let snapshot=$state<UpdateSnapshot>({current_version:'0.9.0',state:'idle',downloaded_bytes:0,preferences:{auto_check:true,auto_download:true},supported:true});
+  let snapshot=$state<UpdateSnapshot>({current_version:appVersion,state:'idle',downloaded_bytes:0,preferences:{auto_check:true,auto_download:true},supported:true});
   let loaded=$state(false), pending=$state(false), requestError=$state(''), feedback=$state(''), confirmInstall=$state(false);
   let revision=0;
   let presentation=$derived(updatePresentation(snapshot));
@@ -37,7 +38,7 @@
 </script>
 {#if visible}
 <section class="updates" class:compact aria-label="版本更新">
-  <div class="updates-heading"><strong>版本更新</strong><span>当前版本 {snapshot.current_version || '0.9.0'}</span></div>
+  <div class="updates-heading"><strong>版本更新</strong><span>当前版本 {snapshot.current_version || appVersion}</span></div>
   <div class="update-status" role="status"><strong>{!loaded&&!requestError?'正在读取更新状态…':presentation.title}</strong>{#if snapshot.latest_version}<span class="update-version">{snapshot.latest_version}</span>{/if}<p>{presentation.description}</p></div>
   {#if snapshot.state==='downloading'}<div class="update-download"><progress max="100" value={percent===null?undefined:percent} aria-label="更新下载进度"></progress><span>{updateBytes(snapshot.downloaded_bytes)}{snapshot.total_bytes?` / ${updateBytes(snapshot.total_bytes)}`:''}{percent!==null?` · ${percent}%`:''}</span></div>{/if}
   {#if snapshot.release_notes}<details class="update-notes" open={!compact}><summary>更新内容</summary><div>{snapshot.release_notes}</div></details>{/if}
