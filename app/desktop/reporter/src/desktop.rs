@@ -108,13 +108,23 @@ impl ChangeDetector{
         }self.previous=Some(current);notices
     }
 }
-pub struct Engine{pub root:PathBuf,gui:PathBuf,collector_start_error:Option<String>,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,notifications:Option<std::sync::Arc<crate::notifications::NotificationService>>}
+pub struct Engine{pub root:PathBuf,gui:PathBuf,collector_start_error:Option<String>,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,repair_pending:bool,notifications:Option<std::sync::Arc<crate::notifications::NotificationService>>}
 impl Engine{
-    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,collector_start_error:None,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false,notifications:None}}
+    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,collector_start_error:None,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false,repair_pending:false,notifications:None}}
+    /// Quiesce all local readers/producers before the independent repair helper starts.
+    pub fn begin_repair(&mut self)->Result<PathBuf>{
+        if self.repair_pending || self.restart_required{return Err("看板正在准备重启，请稍后重试".into());}
+        self.repair_pending=true;
+        if let Some(service)=self.notifications.take(){service.shutdown();}
+        self.store=None;
+        Ok(self.root.clone())
+    }
+    pub fn cancel_repair(&mut self){self.repair_pending=false;self.start_notifications();}
     pub fn set_collector_start_result(&mut self,result:Result<()>){self.collector_start_error=result.err();}
-    pub fn start_notifications(&mut self){if !self.restart_required && self.notifications.is_none(){self.notifications=Some(std::sync::Arc::new(crate::notifications::NotificationService::new(self.root.clone())));}}
+    pub fn start_notifications(&mut self){if !self.repair_pending && !self.restart_required && self.notifications.is_none(){self.notifications=Some(std::sync::Arc::new(crate::notifications::NotificationService::new(self.root.clone())));}}
     /// Clone while locked; perform notification network/control work after releasing Engine.
     pub fn notification_service(&mut self)->Result<std::sync::Arc<crate::notifications::NotificationService>>{
+        if self.repair_pending{return Err("正在修复任务数据，请等待看板重启".into());}
         if self.restart_required || crate::migration::resolve_root(&self.root)?!=self.root{return Err("数据目录已切换，请先重启看板".into());}
         self.start_notifications();self.notifications.clone().ok_or("通知服务不可用".into())
     }
@@ -140,6 +150,7 @@ impl Engine{
         Ok(json!({"success":true,"current":self.root,"path":self.root,"previous":previous,"restart_required":true,"worker_started":started.is_ok(),"warning":started.err(),"old_data_retained":true}))
     }
     pub fn call(&mut self,method:&str,params:Value)->Result<Value>{
+        if self.repair_pending{return Err("正在修复任务数据，请等待看板重启".into());}
         let current=crate::migration::resolve_root(&self.root)?;
         if current!=self.root{if let Some(service)=self.notifications.take(){service.shutdown();}self.store=None;self.root=current;self.restart_required=true;self.connection=None;}
         if method=="data_location"{return Ok(self.data_location());}

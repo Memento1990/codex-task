@@ -160,7 +160,14 @@ fn cooperative_worker_exits_without_kill_and_new_worker_drains_legacy_inbox(){
         assert!(std::time::Instant::now()<deadline);
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    migration::migrate(&old,&new).unwrap();
+    // The worker briefly owns migration.lock while draining. A caller may retry
+    // this explicit pre-operation busy result; do not mistake it for handoff failure.
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(3);
+    loop {match migration::migrate(&old,&new){
+        Ok(_)=>break,
+        Err(error) if error=="数据目录正在迁移，请稍后重试" && std::time::Instant::now()<deadline=>std::thread::sleep(std::time::Duration::from_millis(10)),
+        Err(error)=>panic!("migration failed: {error}"),
+    }}
     assert!(ProcessLock::acquire(&old.join("collector.lock")).is_err());
     store::enqueue(&old,json!({"kind":"SessionEnd","session_id":"one","host_id":"test"})).unwrap();
     let deadline=std::time::Instant::now()+std::time::Duration::from_secs(3);

@@ -1,6 +1,11 @@
 use std::io::{Read,Write};
 fn main(){
     if floatboard_core::build_identity::handle(){return;}
+    let args:Vec<String>=std::env::args().collect();
+    if let Some(i)=args.iter().position(|a|a=="--repair-execute"){
+        let result=args.get(i+1).ok_or("修复请求缺失".to_string()).and_then(|p|floatboard_core::repair_restart::execute(std::path::Path::new(p)));
+        if result.is_err(){std::process::exit(1);}return;
+    }
     if floatboard_core::bridge::is_bridge(){let code=match floatboard_core::bridge::run(){Ok(code)=>code,Err(error)=>{eprintln!("{error}");1}};std::process::exit(code);}
     let root=floatboard_core::data_root();let _=floatboard_core::bridge::process_generation(&root);let args:Vec<String>=std::env::args().collect();
     let result=if args.iter().any(|a|a=="--worker"){floatboard_core::runtime::worker(&root)}

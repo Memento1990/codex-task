@@ -1,0 +1,34 @@
+// All fixtures and subprocesses are independently owned; no production data.
+use floatboard_core::{store, migration, runtime, repair_transaction};
+use std::{fs,path::PathBuf};
+use serde_json::{json,Value};
+use store::Store;
+struct Fixture(PathBuf);
+impl Fixture {
+ fn new()->Self {let p=std::env::temp_dir().join(format!("floatboard-repair-transaction-test-{}",uuid::Uuid::new_v4()));fs::create_dir(&p).unwrap();fs::create_dir(p.join("data")).unwrap();Self(p)}
+ fn root(&self)->PathBuf {self.0.join("data")}
+ fn seed(&self){let s=Store::open(&self.root(),false).unwrap();let task=json!({"id":"fixture:task","revision":2,"title":"fixture","status":"completed","plan":[],"blockers":[],"evidence":[],"history":[]});s.db.execute("insert into tasks values(?1,?2)",rusqlite::params!["fixture:task",task.to_string()]).unwrap();s.db.execute_batch("pragma wal_checkpoint(TRUNCATE)").unwrap();}
+}
+impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+fn target(j:&Value)->PathBuf {PathBuf::from(j["destination"].as_str().unwrap())}
+#[test]fn prepare_preserves_original_and_does_not_switch(){let f=Fixture::new();f.seed();let before=fs::read(f.root().join("events.sqlite3")).unwrap();let j=repair_transaction::prepare(&f.root()).unwrap();assert_eq!(j["phase"],"prepared");assert_eq!(j["recovered_tasks"],1);assert!(target(&j).join("events.sqlite3").is_file());assert_eq!(before,fs::read(f.root().join("events.sqlite3")).unwrap());assert_eq!(migration::resolve_root(&f.root()).unwrap(),f.root());assert_eq!(repair_transaction::status(&f.root()).unwrap()["id"],j["id"]);}
+#[test]fn no_tasks_does_not_create_empty_replacement(){let f=Fixture::new();drop(Store::open(&f.root(),false).unwrap());assert!(repair_transaction::prepare(&f.root()).is_err());assert!(!f.root().join(migration::REDIRECT).exists());assert_eq!(repair_transaction::status(&f.root()).unwrap()["phase"],"not_started");}
+#[test]fn unreadable_source_remains_byte_identical(){let f=Fixture::new();fs::write(f.root().join("events.sqlite3"),b"broken database fixture").unwrap();assert!(repair_transaction::prepare(&f.root()).is_err());assert_eq!(fs::read(f.root().join("events.sqlite3")).unwrap(),b"broken database fixture");assert!(!f.root().join(migration::REDIRECT).exists());}
+#[test]fn status_recovers_committed_redirect_without_rollback(){let f=Fixture::new();f.seed();let j=repair_transaction::prepare(&f.root()).unwrap();store::atomic_json(&f.root().join(migration::REDIRECT),&json!({"version":1,"path":target(&j)})).unwrap();let s=repair_transaction::status(&f.root()).unwrap();assert_eq!(s["phase"],"committed");assert_eq!(migration::resolve_root(&f.root()).unwrap(),target(&j));assert!(repair_transaction::prepare(&f.root()).is_err());}
+#[test]fn forged_latest_id_is_rejected(){let f=Fixture::new();f.seed();let _=repair_transaction::prepare(&f.root()).unwrap();store::atomic_json(&f.0.join("control/repair-transactions/latest.json"),&json!({"version":1,"id":"../../outside"})).unwrap();assert!(repair_transaction::status(&f.root()).is_err());}
+#[test]fn apply_with_live_worker_preserves_sources_and_carries_only_owned_state(){
+ let f=Fixture::new();f.seed();let before=fs::read(f.root().join("events.sqlite3")).unwrap();
+ store::atomic_json(&f.root().join("preferences.json"),&json!({"opacity":91})).unwrap();
+ store::atomic_json(&f.root().join("notifications.json"),&json!({"enabled":false,"baseline_reset":false,"baseline":{"old":{}},"records":[{"status":"pending","attempts":1,"lease_until":99}]})).unwrap();
+ fs::write(f.root().join("do-not-copy-secret.txt"),b"fixture secret").unwrap();
+ let j=repair_transaction::prepare(&f.root()).unwrap();let reporter=PathBuf::from(env!("CARGO_BIN_EXE_FloatboardReporter"));
+ let mut worker=std::process::Command::new(reporter).args(["--worker","--data-dir"]).arg(f.root()).spawn().unwrap();
+ let result=repair_transaction::apply(&f.root(),j["id"].as_str().unwrap());
+ let dest=target(&j);let active=if result.is_ok(){dest.clone()}else{f.root()};
+ // Only this test's worker is asked to exit through its cooperative protocol.
+ fs::write(active.join("worker-shutdown.json"),b"{}").unwrap();let until=std::time::Instant::now()+std::time::Duration::from_secs(8);loop{if worker.try_wait().unwrap().is_some(){break;}assert!(std::time::Instant::now()<until,"test-owned worker failed normal shutdown");std::thread::sleep(std::time::Duration::from_millis(20));}
+ let applied=result.unwrap();assert_eq!(applied["phase"],"committed");assert_eq!(before,fs::read(f.root().join("events.sqlite3")).unwrap());assert!(!dest.join("do-not-copy-secret.txt").exists());assert_eq!(store::read_json(&dest.join("preferences.json")).unwrap()["opacity"],91);
+ let notifications=store::read_json(&dest.join("notifications.json")).unwrap();assert_eq!(notifications["baseline_reset"],true);assert_eq!(notifications["records"][0]["status"],"unknown");assert_eq!(notifications["baseline"],json!({}));assert_eq!(repair_transaction::apply(&f.root(),j["id"].as_str().unwrap()).unwrap()["phase"],"committed");
+}
+#[test]fn modified_replacement_is_not_enabled(){let f=Fixture::new();f.seed();let j=repair_transaction::prepare(&f.root()).unwrap();fs::write(target(&j).join("events.sqlite3"),b"modified").unwrap();let reporter=PathBuf::from(env!("CARGO_BIN_EXE_FloatboardReporter"));let mut worker=std::process::Command::new(reporter).args(["--worker","--data-dir"]).arg(f.root()).spawn().unwrap();let result=repair_transaction::apply(&f.root(),j["id"].as_str().unwrap());fs::write(f.root().join("worker-shutdown.json"),b"{}").unwrap();let until=std::time::Instant::now()+std::time::Duration::from_secs(8);while worker.try_wait().unwrap().is_none(){assert!(std::time::Instant::now()<until,"test worker shutdown timeout");std::thread::sleep(std::time::Duration::from_millis(20));}assert!(result.is_err());assert!(!f.root().join(migration::REDIRECT).exists());}
+#[test]fn concurrent_migration_blocks_prepare(){let f=Fixture::new();f.seed();let _guard=runtime::ProcessLock::acquire(&f.root().join(migration::LOCK)).unwrap();assert!(repair_transaction::prepare(&f.root()).is_err());assert!(!f.root().join(migration::REDIRECT).exists());}

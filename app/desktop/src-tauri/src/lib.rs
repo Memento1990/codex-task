@@ -37,10 +37,10 @@ async fn update_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:
     if development_mode() && action!="snapshot"{return Err("开发调试版禁用正式更新，请发布GitHub Release后在正式版更新".into());}
     if action=="install"{
         if params["confirmed"]!=true{return Err("请确认重启看板后更新".into());}
-        let root={let engine=state.engine.lock().map_err(|_|"本地状态异常")?;if engine.data_location()["restart_required"]==true{return Err("数据目录已迁移，请先重启看板再更新".into());}engine.root.clone()};
+        let root=state.engine.lock().map_err(|_|"本地状态异常")?.begin_repair()?;
         let service=state.updates.clone();let failed=service.clone();
-        let result=tauri::async_runtime::spawn_blocking(move||floatboard_core::update_install::prepare(&service,&root)).await.map_err(|_|"更新准备中断")?;
-        if let Err(error)=result{failed.install_failed(&error);return Err(error);}
+        let result=tauri::async_runtime::spawn_blocking(move||floatboard_core::update_install::prepare(&service,&root)).await.unwrap_or_else(|_|Err("更新准备中断".into()));
+        if let Err(error)=result{if let Ok(mut engine)=state.engine.lock(){engine.cancel_repair();}failed.install_failed(&error);return Err(error);}
         app.exit(0);return Ok(json!({"state":"installing"}));
     }
     let service=state.updates.clone();
@@ -64,13 +64,21 @@ async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::
             return service.call(&name,params);
         }
         if name=="database_repair" {
-            let root={worker.lock().map_err(|_|"本地状态异常".to_string())?.root.clone()};
             let action=params["action"].as_str().unwrap_or("snapshot").to_owned();
             if let Some(obj)=params.as_object_mut(){obj.remove("action");obj.remove("notify");}
-            return floatboard_core::database_repair::call(&root,&action,&params);
+            if action=="snapshot"{
+                let root=worker.lock().map_err(|_|"本地状态异常")?.root.clone();
+                return floatboard_core::repair_restart::status(&root);
+            }
+            if action!="repair_restart" || params["confirmed"]!=true || params.as_object().is_none_or(|o|o.keys().any(|k|k!="confirmed")){return Err("请确认修复并重启，不接受额外参数".into());}
+            let root=worker.lock().map_err(|_|"本地状态异常")?.begin_repair()?;
+            let result=floatboard_core::repair_restart::prepare(&root);
+            if result.is_err(){if let Ok(mut engine)=worker.lock(){engine.cancel_repair();}}
+            return result;
         }
         worker.lock().map_err(|_|"本地状态异常".to_string())?.call(&name,params)
     }).await.map_err(|_|"本地操作已中断")??;
+    if method=="database_repair" && result["status"]=="ready"{app.exit(0);return Ok(result);}
     if method=="preferences" {
         let ui=app.clone();let skip=!result["show_taskbar"].as_bool().unwrap_or(false);
         dock::on_main(&app,move||{if let Some(w)=ui.get_webview_window("main"){ui.state::<State>().dock.lock().map_err(|_|"贴边状态异常")?.preferences(&w,skip)?;}Ok(())}).await?;
@@ -79,7 +87,11 @@ async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::
         if !result["notifications"].as_bool().unwrap_or(true) { if let Some(w)=app.get_webview_window("toast") { let _=w.emit("host-event",json!({"type":"clear"})); let _=w.hide(); } }
         let _=app.emit("host-event",json!({"type":"options","options":result}));
     }
-    if method=="snapshot" && window.label()=="main"{let _=floatboard_core::update_install::acknowledge();}
+    if method=="snapshot" && window.label()=="main"{
+        let _=floatboard_core::update_install::acknowledge();
+        let root=state.engine.lock().map_err(|_|"本地状态异常")?.root.clone();
+        let _=floatboard_core::repair_restart::acknowledge(&root,&result);
+    }
     Ok(result)
 }
 

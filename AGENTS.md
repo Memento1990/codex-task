@@ -9,3 +9,12 @@
 - Existing historical releases may be occupied by old Reporter processes; retain them until sessions end normally. Do not kill Codex/Reporter/GUI to clean directories.
 - A user request to “发版” / “发布版本” defaults to a GitHub Release for `Memento1990/codex-task`, not a local package or production installation. Use `app/desktop/publish-release.ps1` and follow `docs/releasing.md`; run preparation first, inspect the artifacts, then explicitly publish. Never bypass a failed verification or replace an existing published tag/asset.
 - Details: docs/development-isolation.md.
+
+# Required local automated regression
+
+- User-approved default (2026-11-04): after development changes that require automated testing, run the relevant frontend/unit/core tests and build checks; run native GUI regression on a **Win32 independent Desktop (`CreateDesktop`)**. Windows Task View virtual desktops are not a substitute. Follow `docs/automated-regression.md`.
+- Do not switch the user's input desktop or use system-wide mouse/keyboard injection. Drive the isolated WebView through loopback-only CDP and verify real Tauri/native behavior. Ordinary unit/core tests may run outside the independent Desktop; report the layers separately.
+- Build current source explicitly first, then launch DEV only through `app/desktop/dev-isolated.ps1` with `-CodexMode isolated`. Use a dedicated test workspace/sandbox and WebView profile; do not reuse, activate, stop, or overwrite an existing DEV/production instance. Never copy real credentials or modify the user's Codex configuration for regression fixtures.
+- Record source revision and dirty state, test commands/results, desktop/PID ownership, logs and screenshots. Use readiness checks rather than a fixed startup sleep. Investigate failures; preserve initial results when correcting test assertions. Do not claim unexecuted/unsupported cases passed or claim screenshot capture alone is visual validation.
+- Close only the test-owned GUI normally, release owned Desktop handles, and verify debug-port/process cleanup. Never kill GUI/WebView/Reporter/Codex by process name. Real-input/focus/tray/drag/multi-monitor cases not covered by CDP require explicitly reported gaps and a separately authorized interactive test; do not silently fall back to the user's active desktop.
+- Testing permission does not authorize commit, push, release, installation, or production changes.

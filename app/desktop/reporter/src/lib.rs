@@ -13,6 +13,8 @@ pub mod notifications;
 pub mod weixin_lab;
 pub mod weixin;
 pub mod database_repair;
+pub mod repair_transaction;
+pub mod repair_restart;
 
 pub type Result<T> = std::result::Result<T, String>;
 

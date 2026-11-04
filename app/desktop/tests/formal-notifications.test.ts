@@ -10,9 +10,9 @@ test('formal Weixin is reachable outside DEV lab and requires explicit confirmat
  }
  assert.doesNotMatch(channel,/error\s*=\s*String\(/);
 });
-test('copy recovery UI never offers live apply and IPC strips transport envelope',()=>{
+test('one-click repair delegates safe restart to host and strips transport envelope',()=>{
  const ui=source('../src/DatabaseRepair.svelte');const ipc=source('../src-tauri/src/lib.rs');
- assert.match(ui,/recover_copy/);assert.match(ui,/action==='recover_copy'\?\{confirmed:true\}:\{\}/);assert.doesNotMatch(ui,/run\('apply'\)/);assert.match(ui,/不会修复、删除或替换/);
+ assert.match(ui,/repair_restart/);assert.match(ui,/confirmed:\s*true/);assert.doesNotMatch(ui,/recover_copy|run\('apply'\)/);assert.match(ui,/修复并重启/);
  assert.match(ipc,/obj.remove\("action"\);obj.remove\("notify"\)/);
  assert.match(ipc,/service.call\(&name,params\)/);
 });
