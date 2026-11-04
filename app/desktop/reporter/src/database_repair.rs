@@ -10,6 +10,43 @@ const MAX_FILE: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL: u64 = 512 * 1024 * 1024;
 const MAX_ROWS: usize = 10_000;
 const MAX_PAYLOAD: usize = 1024 * 1024;
+const MAX_ACCEPTED_BYTES: usize = 32 * 1024 * 1024;
+const MAX_READ_BYTES: usize = 64 * 1024 * 1024;
+const MAX_WORK: usize = MAX_ROWS * 3;
+const SQL_SECONDS: u64 = 8;
+
+// A connection is never reused until its interrupt thread has been cancelled and
+// joined. The same deadline covers integrity, counts, scanning and all retries.
+fn with_sql_deadline<T>(db: &Connection, action: impl FnOnce(std::time::Instant) -> T) -> T {
+    use std::sync::{Arc, Condvar, Mutex};
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(SQL_SECONDS);
+    let stop=Arc::new((Mutex::new(false),Condvar::new()));
+    struct Cancel(Arc<(Mutex<bool>,Condvar)>);
+    impl Drop for Cancel {fn drop(&mut self){let (lock,wake)=&*self.0;*lock.lock().unwrap_or_else(|e|e.into_inner())=true;wake.notify_all();}}
+    let interrupt=db.get_interrupt_handle();
+    std::thread::scope(|scope| {
+        let worker_stop=stop.clone();
+        let worker=scope.spawn(move || {
+            let (lock,wake)=&*worker_stop;
+            let mut cancelled=lock.lock().unwrap_or_else(|e|e.into_inner());
+            while !*cancelled {
+                let remaining=deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero(){interrupt.interrupt();}
+                // Keep interrupting until cancellation: SQLite clears its flag
+                // after an interrupted statement, so later best-effort counts
+                // must not silently obtain a fresh unbounded SQL window.
+                let wait=if remaining.is_zero(){std::time::Duration::from_millis(10)}else{remaining};
+                cancelled=wake.wait_timeout(cancelled,wait).unwrap_or_else(|e|e.into_inner()).0;
+            }
+        });
+        let cancel=Cancel(stop);
+        let result=action(deadline);
+        drop(cancel);
+        let _=worker.join();
+        result
+    })
+}
+
 
 // Also reject Windows junctions/reparse points, including ancestor directories.
 fn plain(path: &Path) -> Result<()> {
@@ -86,33 +123,117 @@ fn sanitized_task(id: &str, raw: &str) -> Option<Value> {
     obj.insert("recovery_provenance".into(),json!({"source":"readable_task_snapshot","history_recovered":false,"timing_recovered":false,"live_state_verified":false}));
     Some(v)
 }
-fn salvage(db: &Connection, destination: &Path) -> Result<Value> {
-    let known: Option<i64> = db.query_row("select count(*) from tasks",[],|r|r.get(0)).ok();
-    let omitted_events: Option<i64> = db.query_row("select count(*) from events",[],|r|r.get(0)).ok();
-    let omitted_archives: Option<i64> = db.query_row("select count(*) from completed_tasks",[],|r|r.get(0)).ok();
-    let mut tasks = Vec::new(); let mut rejected = 0usize; let mut scan_complete = true; let mut recovered_bytes=0usize;
-    if let Ok(mut stmt) = db.prepare("select case when length(cast(id as blob)) <= 2000 then id else null end, case when length(cast(payload as blob)) <= 1048576 then payload else null end from tasks limit 10001") {
+// Only the Store's known rowid table and TEXT primary-key index may drive the
+// fallback. Never trust an attacker-controlled view/index with the same name.
+fn known_task_index(db: &Connection,deadline:std::time::Instant) -> bool {
+    if std::time::Instant::now()>=deadline{return false;}
+    let table:rusqlite::Result<(String,String)>=db.query_row("select type,tbl_name from sqlite_schema where name='tasks'",[],|r|Ok((r.get(0)?,r.get(1)?)));
+    if !matches!(table,Ok((ref kind,ref name)) if kind=="table" && name=="tasks"){return false;}
+    let columns=(||->rusqlite::Result<Vec<(String,String,i64,i64,i64)>>{
+        let mut s=db.prepare("pragma table_xinfo('tasks')")?;
+        let rows=s.query_map([],|r|Ok((r.get(1)?,r.get(2)?,r.get(3)?,r.get(5)?,r.get(6)?)))?;
+        rows.take(3).collect()
+    })();
+    if !matches!(columns,Ok(ref c) if c.len()==2 && c[0].0=="id" && c[0].1.eq_ignore_ascii_case("text") && c[0].3==1 && c[0].4==0 && c[1].0=="payload" && c[1].1.eq_ignore_ascii_case("text") && c[1].2==1 && c[1].3==0 && c[1].4==0){return false;}
+    let valid=(||->rusqlite::Result<bool>{
+        let mut s=db.prepare("pragma index_list('tasks')")?;let mut rows=s.query([])?;let mut found=false;
+        let mut index_count=0;
+        while let Some(r)=rows.next()? {index_count+=1;if index_count>64 || std::time::Instant::now()>=deadline{return Ok(false);}if r.get::<_,String>(1)?=="sqlite_autoindex_tasks_1"{found=r.get::<_,i64>(2)?==1 && r.get::<_,String>(3)?=="pk" && r.get::<_,i64>(4)?==0;}}
+        if !found{return Ok(false);}
+        let mut s=db.prepare("pragma index_xinfo('sqlite_autoindex_tasks_1')")?;
+        let entries=s.query_map([],|r|Ok((r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,i64>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(entries.len()==2 && entries[0]==(0,Some("id".into()),0,"BINARY".into(),1) && entries[1].0== -1 && entries[1].1.is_none() && entries[1].4==0)
+    })();
+    valid.unwrap_or(false)
+}
+#[derive(Default)]
+struct SalvageWork {full_rows:usize,index_rows:usize,lookups:usize,rejected:usize,unreadable:usize,duplicates:usize,read_bytes:usize,accepted_bytes:usize,budget_exhausted:bool}
+impl SalvageWork {
+    fn available(&mut self,deadline:std::time::Instant)->bool {
+        if std::time::Instant::now()>=deadline || self.full_rows+self.index_rows+self.lookups>=MAX_WORK || self.read_bytes>=MAX_READ_BYTES {self.budget_exhausted=true;false}else{true}
+    }
+    fn bytes(&mut self,n:usize)->bool {if n>MAX_READ_BYTES.saturating_sub(self.read_bytes){self.budget_exhausted=true;false}else{self.read_bytes+=n;true}}
+    fn accept(&mut self,id:String,raw:String,tasks:&mut Vec<(String,Value)>,seen:&mut std::collections::HashSet<String>)->bool {
+        if seen.contains(&id){self.duplicates+=1;return true;}
+        let Some(task)=sanitized_task(&id,&raw) else {self.rejected+=1;return true;};
+        let accepted=task.to_string().len();
+        if tasks.len()>=MAX_ROWS || accepted>MAX_ACCEPTED_BYTES.saturating_sub(self.accepted_bytes){self.budget_exhausted=true;return false;}
+        self.accepted_bytes+=accepted;seen.insert(id.clone());tasks.push((id,task));true
+    }
+}
+fn salvage(db: &Connection, destination: &Path, deadline:std::time::Instant) -> Result<Value> {
+    let count=|sql:&str|->Option<i64>{if std::time::Instant::now()>=deadline{None}else{db.query_row(sql,[],|r|r.get::<_,i64>(0)).ok().filter(|n|*n>=0)}};
+    let known=count("select count(*) from tasks");
+    let omitted_events=count("select count(*) from events");
+    let omitted_archives=count("select count(*) from completed_tasks");
+    let mut tasks=Vec::new();let mut work=SalvageWork::default();let mut seen=std::collections::HashSet::new();let mut scan_complete=true;
+    if let Ok(mut stmt)=db.prepare("select case when length(cast(id as blob)) <= 2000 then id else null end, case when length(cast(payload as blob)) <= 1048576 then payload else null end from tasks not indexed limit 10001") {
         match stmt.query([]) {
-            Ok(mut rows) => loop {
+            Ok(mut rows)=>loop {
+                if !work.available(deadline) || MAX_READ_BYTES.saturating_sub(work.read_bytes)<MAX_PAYLOAD+2000 {work.budget_exhausted=true;scan_complete=false;break;}
                 match rows.next() {
-                    Ok(Some(row)) => {
-                        if tasks.len()+rejected >= MAX_ROWS { scan_complete=false; break; }
-                        let id: rusqlite::Result<String> = row.get(0); let raw: rusqlite::Result<String> = row.get(1);
-                        if let (Ok(id),Ok(raw)) = (id,raw) {
-                            if recovered_bytes.saturating_add(raw.len()) > 32*1024*1024 { scan_complete=false; break; }
-                            if let Some(task)=sanitized_task(&id,&raw) { recovered_bytes+=raw.len(); tasks.push((id,task)); } else { rejected+=1; }
-                        } else { rejected+=1; }
+                    Ok(Some(row))=>{
+                        work.full_rows+=1;
+                        if work.full_rows>MAX_ROWS{scan_complete=false;break;}
+                        let id=row.get::<_,Option<String>>(0);let raw=row.get::<_,Option<String>>(1);
+                        let bytes=id.as_ref().ok().and_then(|s|s.as_ref()).map_or(0,|s|s.len())+raw.as_ref().ok().and_then(|s|s.as_ref()).map_or(0,|s|s.len());
+                        if !work.bytes(bytes){scan_complete=false;break;}
+                        match (id,raw) {
+                            (Ok(Some(id)),Ok(Some(raw)))=>{if !work.accept(id,raw,&mut tasks,&mut seen){scan_complete=false;break;}},
+                            (Ok(_),Ok(_))=>{work.rejected+=1;}, // bounded/NULL values are invalid, not damaged pages
+                            _=>{work.rejected+=1;work.unreadable+=1;scan_complete=false;}
+                        }
                     },
-                    Ok(None) => break,
-                    Err(_) => {scan_complete=false;break;}
+                    Ok(None)=>break,
+                    Err(_)=>{work.unreadable+=1;scan_complete=false;break;}
                 }
             },
-            Err(_) => scan_complete=false,
+            Err(_)=>scan_complete=false
         }
-    } else { scan_complete=false; }
-    if tasks.is_empty() {
-        return Ok(json!({"status":"no_readable_tasks","recovered_tasks":0,"rejected_rows":rejected,"source_task_count":known,"omitted_tasks":known,"scan_complete":scan_complete,"events_recovered":0,"omitted_events":omitted_events,"omitted_source_archive_rows":omitted_archives,"timing_recovered":false,"destination_integrity_ok":false}));
+    }else{scan_complete=false;}
+    // Payload conversion can fail even when rows.next() succeeds (overflow-page
+    // damage). Such failures above MUST trigger the independent index fallback.
+    let mut indexed_fallback=false;let mut index_scan_complete=false;let mut lookup_complete=false;
+    let mut schema_verified=false;
+    if !scan_complete && work.available(deadline) {
+        schema_verified=known_task_index(db,deadline);
+        if schema_verified && work.available(deadline) {
+            indexed_fallback=true;let mut keys=Vec::new();let mut key_seen=std::collections::HashSet::new();let mut index_errors=false;
+            if let Ok(mut stmt)=db.prepare("select case when length(cast(id as blob)) <= 2000 then id else null end from tasks indexed by sqlite_autoindex_tasks_1 limit 10001") {
+                if let Ok(mut rows)=stmt.query([]) {loop {
+                    if !work.available(deadline) || MAX_READ_BYTES.saturating_sub(work.read_bytes)<2000{work.budget_exhausted=true;break;}
+                    match rows.next() {
+                        Ok(Some(row))=>{
+                            work.index_rows+=1;
+                            if work.index_rows>MAX_ROWS{break;}
+                            match row.get::<_,String>(0) {
+                                Ok(id)=>{if !work.bytes(id.len()){break;}if id.is_empty(){work.rejected+=1;}else if !key_seen.insert(id.clone()){work.duplicates+=1;}else{keys.push(id);}},
+                                Err(_)=>{work.rejected+=1;work.unreadable+=1;index_errors=true;}
+                            }
+                        },
+                        Ok(None)=>{index_scan_complete= !index_errors;break;},
+                        Err(_)=>{work.unreadable+=1;break;}
+                    }
+                }}
+            }
+            lookup_complete=true;
+            for id in keys {
+                if !work.available(deadline){lookup_complete=false;break;}
+                // Every enumerated key is charged, including already accepted
+                // duplicates; failed/invalid lookups cannot evade the work cap.
+                if seen.contains(&id){work.duplicates+=1;continue;}
+                if MAX_READ_BYTES.saturating_sub(work.read_bytes)<MAX_PAYLOAD{work.budget_exhausted=true;lookup_complete=false;break;}
+                work.lookups+=1;
+                let raw=db.query_row("select case when length(cast(payload as blob)) <= 1048576 then payload else null end from tasks indexed by sqlite_autoindex_tasks_1 where id=?1",[&id],|r|r.get::<_,String>(0));
+                match raw {
+                    Ok(raw)=>{if !work.bytes(raw.len()) || !work.accept(id,raw,&mut tasks,&mut seen){lookup_complete=false;break;}},
+                    Err(_)=>{work.rejected+=1;work.unreadable+=1;lookup_complete=false;}
+                }
+            }
+        }
     }
+    let mut report=json!({"indexed_fallback":indexed_fallback,"fallback_schema_verified":schema_verified,"index_scan_complete":index_scan_complete,"indexed_lookups_complete":lookup_complete,"unreadable_rows":work.unreadable,"duplicate_rows":work.duplicates,"rejected_rows":work.rejected,"full_scan_rows":work.full_rows,"indexed_rows":work.index_rows,"indexed_lookups":work.lookups,"row_work":work.full_rows+work.index_rows+work.lookups,"accepted_payload_bytes":work.accepted_bytes,"cumulative_read_bytes":work.read_bytes,"budget_exhausted":work.budget_exhausted,"sql_deadline_exceeded":std::time::Instant::now()>=deadline,"counts_are_best_effort":true,"row_counters_are_attempts":true,"full_scan_row_limit":MAX_ROWS,"indexed_row_limit":MAX_ROWS,"total_row_work_limit":MAX_WORK,"accepted_payload_byte_limit":MAX_ACCEPTED_BYTES,"cumulative_read_byte_limit":MAX_READ_BYTES,"sql_deadline_seconds":SQL_SECONDS,"source_task_count":known,"omitted_tasks":known.map(|n|(n-tasks.len() as i64).max(0)),"scan_complete":scan_complete,"events_recovered":0,"omitted_events":omitted_events,"omitted_source_archive_rows":omitted_archives,"historical_completion_episodes_recovered":0,"timing_recovered":false,"recovered_tasks":tasks.len(),"destination_integrity_ok":false});
+    if tasks.is_empty(){report["status"]=json!("no_readable_tasks");return Ok(report);}
     fs::create_dir(destination).map_err(|_| "恢复目录创建失败")?;
     let target = Store::open(destination,false)?;
     target.db.execute("delete from store_migrations where name='task_retention_v1'",[]).map_err(|_| "恢复迁移准备失败")?;
@@ -126,7 +247,36 @@ fn salvage(db: &Connection, destination: &Path) -> Result<Value> {
     let completed: i64=target.db.query_row("select count(*) from completed_tasks",[],|r|r.get(0)).map_err(|_| "恢复完成记录检查失败")?;
     if !integrity(&target.db) || target.tasks().is_err() { return Err("恢复副本未通过完整性或应用读取检查".into()); }
     target.db.execute_batch("pragma wal_checkpoint(TRUNCATE);").map_err(|_| "恢复副本收尾失败")?;
-    Ok(json!({"status":"partial_recovery","recovered_tasks":tasks.len(),"reconstructed_current_completions":completed,"rejected_rows":rejected,"source_task_count":known,"counts_are_best_effort":true,"omitted_tasks":known.map(|n|(n-tasks.len() as i64).max(0)),"scan_complete":scan_complete,"destination_integrity_ok":true,"events_recovered":0,"omitted_events":omitted_events,"omitted_source_archive_rows":omitted_archives,"historical_completion_episodes_recovered":0,"timing_recovered":false}))
+    report["status"]=json!("partial_recovery");report["destination_integrity_ok"]=json!(true);report["reconstructed_current_completions"]=json!(completed);Ok(report)
+}
+
+#[cfg(test)]
+mod bounded_fallback_tests {
+    use super::*;
+    #[test]
+    fn fallback_requires_known_store_primary_key_schema(){
+        let db=Connection::open_in_memory().unwrap();let deadline=std::time::Instant::now()+std::time::Duration::from_secs(2);
+        db.execute_batch("create table tasks(id text primary key,payload text not null)").unwrap();assert!(known_task_index(&db,deadline));
+        db.execute_batch("drop table tasks;create table tasks(id text,payload text not null);create unique index unrelated_pk on tasks(id)").unwrap();assert!(!known_task_index(&db,deadline));
+        db.execute_batch("drop table tasks;create table tasks(id text primary key collate nocase,payload text not null)").unwrap();assert!(!known_task_index(&db,deadline));
+    }
+    #[test]
+    fn read_and_accepted_budgets_charge_invalid_and_duplicate_work(){
+        let mut work=SalvageWork::default();let mut tasks=Vec::new();let mut seen=std::collections::HashSet::new();
+        let raw=json!({"id":"one","revision":1,"status":"running","plan":[],"blockers":[],"evidence":[]}).to_string();
+        assert!(work.bytes(raw.len()));assert!(work.accept("one".into(),raw.clone(),&mut tasks,&mut seen));
+        assert!(work.bytes(raw.len()));assert!(work.accept("one".into(),raw.clone(),&mut tasks,&mut seen));
+        assert_eq!(work.duplicates,1);assert_eq!(tasks.len(),1);assert_eq!(work.read_bytes,raw.len()*2);
+        assert!(work.bytes(3));assert!(work.accept("bad".into(),"bad".into(),&mut tasks,&mut seen));assert_eq!(work.rejected,1);
+        work.read_bytes=MAX_READ_BYTES;assert!(!work.bytes(1));assert!(work.budget_exhausted);
+        work.accepted_bytes=MAX_ACCEPTED_BYTES;assert!(!work.accept("two".into(),raw.replace("one","two"),&mut tasks,&mut seen));
+    }
+    #[test]
+    fn cancelled_watchdog_is_joined_before_connection_reuse(){
+        let db=Connection::open_in_memory().unwrap();
+        assert_eq!(with_sql_deadline(&db,|_|db.query_row("select 1",[],|r|r.get::<_,i64>(0)).unwrap()),1);
+        assert_eq!(db.query_row("select 2",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+    }
 }
 
 /// `root` is the caller-owned source data root, never a UI-supplied path.
@@ -169,16 +319,17 @@ pub fn call(root: &Path, action: &str, params: &Value) -> Result<Value> {
         let analysis=work.join("analysis");fs::create_dir(&analysis).map_err(|_|"分析目录创建失败")?;
         for name in FILES {if !before[name].is_null(){copy_file(&evidence.join(name),&analysis.join(name))?;}}
         match readonly(&analysis) {
-            Ok(db)=>{
+            Ok(db)=>with_sql_deadline(&db,|deadline| {
                 report["source_copy_integrity_ok"]=json!(integrity(&db));
                 report["status"]=json!("inspected_copy");
                 if action=="recover_copy" {
-                    match salvage(&db,&work.join("recovered-data")) {
+                    match salvage(&db,&work.join("recovered-data"),deadline) {
                         Ok(result)=>{report["status"]=result["status"].clone();if result["destination_integrity_ok"]==true {report["paths"]["recovered_database"]=json!(format!("control/database-recovery/{id}/recovered-data/events.sqlite3"));}report["recovery"]=result;},
                         Err(_)=>{report["status"]=json!("recovery_failed");report["error"]=json!("恢复副本未通过检查，不能使用；原文件未改动");}
                     }
                 }
-            },
+                report["sql_deadline_exceeded"]=json!(std::time::Instant::now()>=deadline);
+            }),
             Err(_)=>{report["status"]=json!("unreadable_copy");report["source_copy_integrity_ok"]=json!(false);}
         }
     }

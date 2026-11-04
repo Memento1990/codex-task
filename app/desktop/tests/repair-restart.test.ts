@@ -39,13 +39,14 @@ test('all repair lifecycle states have plain language presentation and uncertain
   assert.match(ui,/Object\.hasOwn\(labels,snapshot\.status\)/);
 });
 
-test('blocked and failure views preserve records and sessions without exposing backend errors',()=>{
+test('blocked and failure views preserve records and render host-safe stage messages as escaped text',()=>{
   assert.match(ui,/blocked\?:boolean;onbusychange\?:\(v:boolean\)=>void/);
   assert.match(markup,/disabled=\{blocked\|\|busy\|\|!native\|\|!loaded\|\|!known\|\|!!error\}/);
   assert.match(markup,/原始记录仍保留，正在进行的会话未被结束/);
   assert.match(markup,/原始记录仍保留，正在进行的会话不会被结束/);
   assert.match(ui,/catch\{/);
-  assert.doesNotMatch(ui,/String\(e\)|error\.message|JSON\.stringify|\{snapshot\.(message|details)\}/);
+  assert.match(markup,/snapshot\?\.message\|\|/);
+  assert.doesNotMatch(ui,/String\(e\)|error\.message|JSON\.stringify|\{@html/);
   assert.doesNotMatch(markup,/数据库|WAL|完整性|recover_copy|inspect|control\//);
   assert.match(markup,/role="alert"/);
   assert.match(markup,/aria-live="polite"/);

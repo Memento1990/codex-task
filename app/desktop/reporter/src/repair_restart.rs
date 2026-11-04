@@ -49,6 +49,24 @@ impl Parent{
 }
 /// Caller has already gated Engine and drained foreground notifications/SQLite.
 pub fn prepare(root:&Path)->Result<Value>{
+    let outcome=prepare_inner(root);
+    if let Err(error)=&outcome {
+        // Preparation may fail before a helper/request exists. Persist that
+        // stage instead of reverting the settings page to "not started".
+        let message=if error=="未找到通过验证的可恢复任务；原数据保持不变" {
+            "未能恢复通过校验的任务，尚未切换或重启。原数据库和日志已保留。"
+        }else{"修复准备未完成，尚未切换数据。原数据库和日志已保留。"};
+        // Never erase a prior helper/committed operation or claim that an
+        // already redirected source was not switched. This record is only for
+        // errors before an operation has established its lifecycle identity.
+        let prior=base(root).ok().and_then(|p|{let p=p.join("latest.json");if p.exists(){limited(&p).ok()}else{Some(json!({"status":"not_started"}))}});
+        let can_record=prior.as_ref().is_some_and(|v|matches!(v["status"].as_str(),Some("not_started"|"failed"|"blocked")))
+            && crate::migration::resolve_root(root).is_ok_and(|current|current==root);
+        if can_record {let _=result(root,json!({"status":"failed","stage":"prepare","message":message,"at":crate::now()}));}
+    }
+    outcome
+}
+fn prepare_inner(root:&Path)->Result<Value>{
     let candidate=crate::repair_transaction::prepare(root)?;
     let id=candidate["id"].as_str().or_else(||candidate["operation_id"].as_str()).ok_or("修复准备缺少操作身份")?;
     let exe=std::env::current_exe().map_err(|_|"看板路径不可用")?;

@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "codex-floatboard"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "floatboard-core",
  "serde",
@@ -1169,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "floatboard-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",

@@ -74,7 +74,7 @@
     {:else if snapshot?.status==='preparing'||snapshot?.status==='ready'}
       <p>看板会在准备完成后自动安全退出并重新打开，请勿重复操作。不会强行结束正在进行的会话。</p>
     {:else if snapshot?.status==='blocked'||snapshot?.status==='failed'}
-      <p>为保护任务记录，本次操作未能安全完成。原始记录仍保留，正在进行的会话未被结束。请稍后再试，不要删除原始记录。</p>
+      <p>{snapshot?.message||'为保护任务记录，本次操作未能安全完成。原始记录仍保留，正在进行的会话未被结束。不要删除原始记录。'}</p>
     {:else if loaded&&!known}
       <p>原始记录仍保留，不会强行结束正在进行的会话。请稍后重新打开此页面。</p>
     {/if}
