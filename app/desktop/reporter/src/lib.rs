@@ -10,6 +10,7 @@ pub mod update;
 pub mod update_install;
 pub mod build_identity;
 pub mod notifications;
+pub mod weixin_lab;
 
 pub type Result<T> = std::result::Result<T, String>;
 

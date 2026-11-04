@@ -83,7 +83,7 @@ fn recover_locked(root:&Path,home:&Path)->Result<bool>{
     fs::remove_file(path).map_err(|_|"接入事务已恢复但日志清理失败，请重试")?;Ok(true)
 }
 /// Recover only our two-file transaction, never restore an entire config backup.
-pub fn recover_at(root:&Path,home:&Path)->Result<bool>{let _lock=ProcessLock::acquire(&crate::bridge::control_root(root).join("integration.lock")).map_err(|_|"另一个接入操作正在进行")?;recover_locked(root,home)}
+pub fn recover_at(root:&Path,home:&Path)->Result<bool>{let _lock=ProcessLock::acquire(&crate::bridge::control_root(root).join("integration.lock")).map_err(|_|"另一个接入操作正在进行")?;let _home_lock=ProcessLock::acquire(&home.join(".floatboard-config.lock")).map_err(|_|"同一 Codex 目录的正式版或 DEV 接入操作正在进行")?;recover_locked(root,home)}
 fn suspected_hook(value:&Value)->bool{let raw=value.to_string().to_lowercase();raw.contains("floatboardreporter")||raw.contains("codex_floatboard")||raw.contains("floatboardbridge")||value["hooks"].as_array().is_some_and(|hooks|hooks.iter().any(|hook|hook["type"]=="mcp_tool"&&hook["tool"]=="hook_context"))}
 /// Only an exact, complete contribution under the other namespace is foreign.
 /// In particular, a same-owner command cannot hide behind a foreign MCP key.
@@ -144,6 +144,7 @@ fn set_from(document:&mut DocumentMut,section:&str,key:&str,value:&Value)->Resul
 pub fn preview_at(root:&Path,home:&Path,reporter:&Path,remove:bool)->Result<Preview>{preview_at_with_recovery(root,home,reporter,remove,false)}
 pub fn preview_at_with_recovery(root:&Path,home:&Path,reporter:&Path,remove:bool,confirm_recovery:bool)->Result<Preview>{
     let _lock=ProcessLock::acquire(&crate::bridge::control_root(root).join("integration.lock")).map_err(|_|"另一个接入操作正在进行")?;
+    let _home_lock=ProcessLock::acquire(&home.join(".floatboard-config.lock")).map_err(|_|"同一 Codex 目录的正式版或 DEV 接入操作正在进行")?;
     recover_locked(root,home)?;
     let path=home.join("config.toml");let original=config_bytes(&path)?;
     let source=std::str::from_utf8(&original).map_err(|_|"Codex 配置无法解析；未修改文件")?;let bom=source.starts_with('\u{feff}');
@@ -228,6 +229,7 @@ pub fn connection_state(root:&Path)->Value{
 }
 pub fn apply(root:&Path,plan:&Preview)->Result<bool>{
     let _lock=ProcessLock::acquire(&crate::bridge::control_root(root).join("integration.lock")).map_err(|_|"另一个接入操作正在进行")?;
+    let _home_lock=ProcessLock::acquire(&plan.home.join(".floatboard-config.lock")).map_err(|_|"同一 Codex 目录的正式版或 DEV 接入操作正在进行")?;
     recover_locked(root,&plan.home)?;
     if plan.path!=plan.home.join("config.toml"){return Err("接入计划目标无效".into());}
     if plan.recovery_required&&!plan.recovery_confirmed{return Err("发现旧版连接但归属记录缺失；请确认恢复旧版连接后重试".into());}

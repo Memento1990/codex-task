@@ -50,7 +50,7 @@ export function connectionStatus(connection: Connection): string {
   if(['ready','configured','awaiting_reload','awaiting_session'].includes(connection.state))return connection.mcp_connected?'连接已确认 · 待会话':'配置完成 · 连接待确认';
   return ({missing:'尚未配置',recovery_required:'旧连接待恢复',conflict:'配置需要检查',partial:'配置需要检查',session_received:'会话事件已收到',sync_verified:'接入与同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
 }
-export type Snapshot = { tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
+export type Snapshot = { collector?:{status:string;heartbeat_age:number|null;pid:number|null;version:string|null;start_error:string|null;data_root:string;guidance:string}; storage?: {status:'ok'|'error';message:string}; tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
 export type DataLocation = { current: string; restart_required: boolean };
 export type UpdateSnapshot = {current_version:string;state:string;latest_version?:string|null;release_notes?:string|null;release_url?:string|null;downloaded_bytes:number;total_bytes?:number|null;error?:string|null;last_checked?:number|null;preferences:{auto_check:boolean;auto_download:boolean};supported:boolean;installation_result?:{status?:string;version?:string;message?:string}|null};
 export function updatePresentation(update:UpdateSnapshot):{title:string;description:string;action:'check'|'download'|'install'|null;button:string} {

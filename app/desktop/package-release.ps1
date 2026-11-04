@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$TargetDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Version='0.11.0',[switch]$SignUpdate)
+param([Parameter(Mandatory=$true)][string]$TargetDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Version='0.12.0',[switch]$SignUpdate)
 $ErrorActionPreference='Stop'
 if($Version -notmatch '^\d+\.\d+\.\d+$'){throw 'Only stable semantic versions supported'}
 $target=(Resolve-Path -LiteralPath $TargetDirectory).Path

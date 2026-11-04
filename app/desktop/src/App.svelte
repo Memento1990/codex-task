@@ -6,15 +6,18 @@
   import TaskDetail from './TaskDetail.svelte';
   import Updates from './Updates.svelte';
   import Notifications from './Notifications.svelte';
+  import WeixinLab from './WeixinLab.svelte';
   import { appVersion } from './version';
+  import { utilityKind, type UtilityKind } from './utility-window';
   type Scope = {task_id?: string; scope?: string; tab?: number};
-  const initial = (window as unknown as {__FLOATBOARD_VIEW__?:{view:string;value?:Scope;notice?:unknown}}).__FLOATBOARD_VIEW__ || {view:'main'};
+  const initial = (window as unknown as {__FLOATBOARD_VIEW__?:{view:string;kind?:string;value?:Scope;notice?:unknown}}).__FLOATBOARD_VIEW__ || {view:'main'};
   const demo = new URLSearchParams(location.search).has('demo');
   const development = (window as unknown as {__FLOATBOARD_DEVELOPMENT__?:boolean}).__FLOATBOARD_DEVELOPMENT__===true;
   let view = $state(initial.view);
+  const utility = initial.view==='utility' ? utilityKind(initial.kind) : null;
   let tasks = $state<Task[]>([]), options = $state<Options>({...defaults}), healthy = $state(false), connection = $state<Connection>({state:'missing'});
   let selected = $state(''), tab = $state(initial.value ? normalizeTab(initial.value.tab) : view === 'main' ? 1 : 0), filter = $state('all'), scope = $state<Scope>(initial.value || {});
-  let now = $state(Date.now()/1000), error = $state(''), pinned = $state(true), menu = $state(false), loading = $state(true);
+  let now = $state(Date.now()/1000), error = $state(''), storageError = $state(''), notificationError = $state(''), collectorNote = $state(''), snapshotFailed = $state(false), pinned = $state(true), menu = $state(false), loading = $state(true);
   let detailsCollapsed = $state(false), dockCollapsed = $state(false), dockSide = $state<'left'|'right'>('right'), dockHovered = $state(false);
   let dock = $derived(dockSummary(tasks, selected));
   let summaryMode = $derived(dockSummaryMode(options)), dockDragging = $state(false);
@@ -34,21 +37,23 @@
   $effect(()=>{if(native&&view==='main'){const enabled=!dialog&&!menu&&!demoHistory;void action('dock_set_enabled',enabled).catch(()=>{});}});
   $effect(()=>{if(native&&view==='main'){const collapsed=detailsCollapsed&&!dialog;void action('details_collapse',collapsed).catch(()=>{});}});
   let updateBusy = $state(false), notificationBusy = $state(false);
-  let dialog = $state<'settings'|'integration'|'updates'|'notifications'|null>(null), draft = $state<Options>({...defaults}), busy = $state(false), note = $state(''), advanced = $state(false), disconnectConfirm = $state(false);
+  let dialog = $state<'settings'|'integration'|'updates'|'notifications'|'weixin-lab'|null>(null), draft = $state<Options>({...defaults}), busy = $state(false), note = $state(''), advanced = $state(false), disconnectConfirm = $state(false);
   let changes = $state<{title:string;key:string;before:string;after:string;diff:string}[]>([]);
   let demoHistory = $state(false), scopeTask = $state('');
   let panelDetailsHidden = $derived(detailsCollapsed && !dialog && view==='main' && !demoHistory);
   let maximized = $state(false), diagnostics = $state(''), connectionError = $state(''), recoveryConfirm = $state(false), recoveryPreviewReady = $state(false), upgradeConfirm=$state(false), upgradeReady=$state(false);
   let wizard = $derived(integrationStep(connection));
   let tone = $derived(connectionTone(connection));
-  let modalTitle=$derived(dialog==='settings'?'看板设置':dialog==='updates'?'版本更新':dialog==='notifications'?'消息通知':'Codex 接入');
-  function closeDialog(){if(!modalLocked)dialog=null;}
+  let modalTitle=$derived(dialog==='settings'?'看板设置':dialog==='updates'?'版本更新':dialog==='notifications'?'消息通知':dialog==='weixin-lab'?'微信连接验证 · DEV':'Codex 接入');
+  function closeDialog(){if(!modalLocked){if(utility)void action('utility_busy',false).then(()=>action('utility_close')).catch(e=>note=String(e));else dialog=null;}}
+  async function openUtility(kind:UtilityKind){menu=false;if(native){try{await action('utility_open',kind);}catch(e){error='打开功能窗口失败：'+String(e);}}else if(kind==='settings')settings();else if(kind==='integration')void integration();else dialog=kind;}
+  $effect(()=>{if(native&&utility)void action('utility_busy',modalLocked).catch(()=>{});});
   function escapeDialog(event:KeyboardEvent){if(event.key!=='Escape'||event.defaultPrevented)return;if(dockCollapsed){event.preventDefault();void hoverDock(false);return;}if(dialog){event.preventDefault();if(modalLocked)return;if(migrateConfirm){migrateConfirm=false;return;}if(recoveryConfirm){recoveryConfirm=false;return;}if(upgradeConfirm){upgradeConfirm=false;return;}if(disconnectConfirm){disconnectConfirm=false;return;}closeDialog();}else if(view==='completed'||demoHistory)void closeView();else menu=false;}
   const migrationWarning = '迁移前先用新版重新连接，然后完整退出所有 Codex / app-server 会话及其他看板实例，暂停全部上报；迁移不是在线操作。完成后重启看板，再启动 Codex 并按正常流程信任新版 Hook。旧版 Hook 不支持迁移后的版本恢复。必须保留旧目录用于路径重定向，不可删除。';
   let dataLocation = $state<DataLocation>({current:'',restart_required:false}), dataPath = $state(''), dataNote = $state(''), dataLoading = $state(false), dataBusy = $state(false), migrateConfirm = $state(false), producersStopped = $state(false);
-  let modalLocked=$derived(busy||dataBusy||updateBusy||notificationBusy);
+  let modalLocked=$derived(busy||dataBusy||updateBusy||notificationBusy||(Boolean(utility)&&loading));
   const previewNotice = createTestNoticeFactory();
-  let connectionLabel = $derived(loading?'正在读取':!healthy?'采集离线':connectionStatus(connection));
+  let connectionLabel = $derived(loading?'正在读取':storageError?'任务库异常':snapshotFailed?'数据服务异常':!healthy?'采集心跳异常':connectionStatus(connection));
   type Toast = Notice & {key:number;remaining:number;started:number;timer?:ReturnType<typeof setTimeout>};
   let toasts = $state<Toast[]>([]), toastKey = 0;
   let live = $derived(view === 'completed' || demoHistory ? tasks.filter(t => scope.scope ? t.id === scope.scope : t.status === 'completed') : visibleTasks(tasks,filter));
@@ -71,7 +76,7 @@
   async function openCompleted(value:Scope = {}) {
     if(native) await action('completed',value); else { demoHistory=true;scope=value;selected=value.task_id || value.scope || ''; tab=normalizeTab(value.tab); }
   }
-  function settings() {menu=false;draft={...options,dock_summary_mode:dockSummaryMode(options)};note='';dataNote='';migrateConfirm=false;producersStopped=false;dialog='settings';void loadDataLocation();}
+  function settings() {if(native&&!utility){void openUtility('settings');return;}menu=false;draft={...options,dock_summary_mode:dockSummaryMode(options)};note='';dataNote='';migrateConfirm=false;producersStopped=false;dialog='settings';void loadDataLocation();}
   async function loadDataLocation() {
     dataLoading=true;
     try {dataLocation=native?await call<DataLocation>('data_location'):{current:'演示模式 · 无本地数据目录',restart_required:false};dataPath=dataLocation.current;}
@@ -94,7 +99,7 @@
   let menuAnchor = $state<HTMLDivElement>();
   function closeMenuOutside(event:PointerEvent|FocusEvent){if(menu&&event.target instanceof Node&&!menuAnchor?.contains(event.target))menu=false;}
   function blurWindow(){menu=false;clearToolbarPointer();}
-  async function integration() {menu=false;note='';advanced=false;dialog='integration';disconnectConfirm=false;recoveryConfirm=false;recoveryPreviewReady=false;upgradeConfirm=false;upgradeReady=false;changes=[];}
+  async function integration() {if(native&&!utility){await openUtility('integration');return;}menu=false;note='';advanced=false;dialog='integration';disconnectConfirm=false;recoveryConfirm=false;recoveryPreviewReady=false;upgradeConfirm=false;upgradeReady=false;changes=[];}
   async function runConnect(remove=false,confirmRecovery=false) {
     if(busy)return;
     busy=true;note='';
@@ -111,7 +116,7 @@
     if(wizard.action==='connect')await runConnect();
     else if(wizard.action==='recover')await previewRecovery();
     else if(wizard.action==='details'){advanced=true;}
-    else if(wizard.action==='done')dialog=null;
+    else if(wizard.action==='done')closeDialog();
     else {busy=true;note='';try{await refresh();note=error || '检查完成；后续将继续自动验证。';}finally{busy=false;}}
   }
   async function loadDiff(remove=false) {advanced=true;try{changes=native?(await call<{changes:typeof changes}>('preview',{remove})).changes:[];}catch(e){note=String(e);}}
@@ -120,17 +125,17 @@
     if(updateBusy)return;
     if(dataLocation.restart_required){note='数据已迁移，请先重启看板后再保存设置。';return;}
     busy=true;note='';
-    try {options=native?await saveOptions(draft):{...draft};dialog=null;}catch(e){note='保存失败：'+String(e);}finally{busy=false;}
+    let saved=false;try {options=native?await saveOptions(draft):{...draft};saved=true;}catch(e){note='保存失败：'+String(e);}finally{busy=false;}if(saved){await tick();closeDialog();}
   }
   async function copy(text:string){if(native)await action('copy',text);else await navigator.clipboard.writeText(text).catch(()=>{});}
   async function closeView(){if(native)await action('hide');else {demoHistory=false;scope={};selected=scopeTask;}}
   function resetScope(value:Scope){scope=value;selected=value.task_id || value.scope || '';tab=normalizeTab(value.tab);}
   async function refresh() {
     if(view === 'toast' || !native) return;
-    try { const snapshot=await call<Snapshot>('snapshot',{notify:view==='main'}); tasks=snapshot.tasks.filter(isReportedTask);options=snapshot.options;healthy=snapshot.healthy;connection=snapshot.connection;connectionError=snapshot.connection.error || snapshot.connection.hook_error || '';diagnostics=diagnosticText(snapshot.connection.diagnostics || snapshot.diagnostics);now=snapshot.now;error='';loading=false;
+    try { const snapshot=await call<Snapshot>('snapshot',{notify:view==='main'}); storageError=snapshot.storage?.status==='error'?snapshot.storage.message:'';if(!storageError)tasks=snapshot.tasks.filter(isReportedTask);options=snapshot.options;healthy=snapshot.healthy;connection=snapshot.connection;connectionError=snapshot.connection.error || snapshot.connection.hook_error || '';collectorNote=[snapshot.collector?.start_error,!healthy?snapshot.collector?.guidance:'',snapshot.collector?.version?`采集版本：${snapshot.collector.version}`:''].filter(Boolean).join('\n');diagnostics=[diagnosticText(snapshot.connection.diagnostics || snapshot.diagnostics),storageError,collectorNote].filter(Boolean).join('\n');now=snapshot.now;error='';snapshotFailed=false;loading=false;
       if(!live.some(t=>t.id===selected)){const first=view==='main'?(live.find(t=>openBlockers(t).length)||live[0]):live[0];selected=first?.id||'';if(first)tab=view==='main'&&openBlockers(first).length?1:0;}
-      if(view==='main')for(const notice of snapshot.notices)await action('toast',{...notice,seconds:options.notification_seconds,theme:options.theme,completed:tasks.find(t=>t.id===notice.task_id)?.status==='completed'});
-    }catch(e){error='数据暂不可读 · 保留最近快照';loading=false;healthy=false;}
+      if(view==='main')for(const notice of snapshot.notices){try{await action('toast',{...notice,seconds:options.notification_seconds,theme:options.theme,completed:tasks.find(t=>t.id===notice.task_id)?.status==='completed'});notificationError='';}catch{notificationError='浮窗通知暂时不可用；任务读取与采集状态不受此提示影响。';}}
+    }catch{error='数据服务暂不可读 · 保留最近快照；请打开接入诊断检查，不要删除数据。';snapshotFailed=true;loading=false;}
   }
   function removeToast(key:number){const item=toasts.find(t=>t.key===key);if(item?.timer)clearTimeout(item.timer);toasts=toasts.filter(t=>t.key!==key);void resizeToast();}
   function pauseToast(item:Toast){if(item.timer){clearTimeout(item.timer);item.timer=undefined;item.remaining=Math.max(0,item.remaining-(Date.now()-item.started));}}
@@ -148,7 +153,8 @@
   async function testNotice(){if(!draft.notifications){note='请先开启消息浮窗通知';return;}try{const value=previewNotice(draft);if(native)await action('toast',value);else note='通知预览：'+draft.notification_seconds+' 秒';}catch(e){note='通知发送失败：'+String(e);}}
   onMount(()=>{
     let stopped=false;let unlisten=()=>{};let timer:ReturnType<typeof setTimeout>;
-    async function loop(){await refresh();if(!stopped)timer=setTimeout(loop,700);}
+    let utilityInitialized=false;
+    async function loop(){await refresh();if(utility&&!utilityInitialized&&!stopped){utilityInitialized=true;if(utility==='settings')settings();else if(utility==='integration')void integration();else dialog=utility;}if(!stopped)timer=setTimeout(loop,700);}
     if(native){
       if(view==='toast')document.documentElement.style.background='transparent';
       void onHost(value=>{
@@ -179,25 +185,25 @@
 {#if view==='toast'}
   <div class="toast-stack">{#each toasts as toast (toast.key)}<article class="toast" class:blocker-toast={isBlockerNotice(toast)} onpointerenter={()=>pauseToast(toast)} onpointerleave={()=>resumeToast(toast)}><button class="toast-open" onclick={()=>{void action('open_notice',toast);removeToast(toast.key);}}>{#if isBlockerNotice(toast)}<span class="toast-blocker-label"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7.1 2.5a1 1 0 0 1 1.8 0l5.5 10A1 1 0 0 1 13.5 14h-11a1 1 0 0 1-.9-1.5l5.5-10Z" stroke="currentColor"/><path d="M8 6v3m0 2v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>卡点提醒 · 需要关注</span>{/if}<strong>{toast.title}</strong>{#each toast.lines as line}<span>{line}</span>{/each}</button><button class="toast-close" aria-label="关闭通知" onclick={()=>removeToast(toast.key)}>×</button></article>{/each}</div>
 {:else}
-  {#if dockCollapsed}<div class="dock-shell" class:left={dockSide==='left'} onpointerenter={()=>hoverDock(true)} onpointerleave={()=>hoverDock(false)} role="presentation">
+  {#if !utility&&dockCollapsed}<div class="dock-shell" class:left={dockSide==='left'} onpointerenter={()=>hoverDock(true)} onpointerleave={()=>hoverDock(false)} role="presentation">
     <button class="dock-ball" class:attention={dock.blockers>0} class:finished={dock.allCompleted} aria-label={`${dock.title}，${dock.badge}，点击恢复面板`} aria-describedby={dockHovered?'dock-summary':undefined} onfocus={()=>hoverDock(true)} onblur={()=>hoverDock(false)} onpointerdown={startDockPointer} onpointermove={moveDockPointer} onpointerup={endDockPointer} onpointercancel={endDockPointer} onclick={clickDock}>
       <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="dock-ring-track" cx="32" cy="32" r="28"/><circle class="dock-ring" class:unknown={dock.progress===null&&!dock.allCompleted} cx="32" cy="32" r="28" pathLength="100" stroke-dasharray={dock.allCompleted?'100 100':dock.progress===null?'5 7':`${dock.progress*100} 100`}/><path class="dock-avatar" d="M20 23q12-8 24 0l2 18q-14 9-28 0z"/><path class="dock-antenna" d="M25 20v-3m14 3v-3"/><rect class="dock-face" x="23" y="27" width="18" height="11" rx="4"/><path class="dock-terminal" d="m27 30 3 2-3 2m7 0h3"/></svg>
       <span class="dock-badge">{dock.badge}</span>
     </button>
     {#if dockHovered&&summaryMode!=='never'}<div class="dock-summary" id="dock-summary" role="tooltip"><strong>{dock.title}</strong><span>{dock.total?`${dock.completed}/${dock.total} 步骤 · `:''}{dock.step}</span><small>{dock.blockers?`${dock.blockers} 个未解除卡点 · `:''}{dock.active?`${dock.active} 个进行中任务`:'完成记录继续保留'} · 点击恢复</small></div>{/if}
   </div>{/if}
-  <div class="panel-shell" class:details-collapsed={panelDetailsHidden} hidden={dockCollapsed} inert={dockCollapsed}>
+  {#if !utility}<div class="panel-shell" class:details-collapsed={panelDetailsHidden} hidden={dockCollapsed} inert={dockCollapsed}>
   <header class="toolbar">
     <!-- 专用拖动区不包含任何按钮，避免窗口拖动抢占控件点击。 -->
     <div class="toolbar-drag" role="presentation" onpointerdown={startToolbarPointer} onpointermove={moveToolbarPointer} onpointerup={endToolbarPointer} onpointercancel={endToolbarPointer} onlostpointercapture={endToolbarPointer} ondblclick={()=>{clearToolbarPointer();void windowAction('toggle_maximize');}}><span class="app-mark">&gt;_</span><strong>{view==='completed'||demoHistory?'已完成记录':'卡点调度台'}</strong><span class="connection" class:offline={!healthy || tone==='problem'} class:unconfirmed={healthy && tone==='neutral'} title={connectionError || connectionLabel}><i></i>{connectionLabel}</span></div>
-    <div class="toolbar-actions">{#if view==='main'&&!demoHistory}<button class="icon-button" title="收起为头像球" aria-label="收起为头像球" onclick={collapseDock}><Icon name="dock"/></button><button class="icon-button" class:pressed={detailsCollapsed} title={detailsCollapsed?'展开任务详情':'收起任务详情'} aria-label={detailsCollapsed?'展开任务详情':'收起任务详情'} aria-expanded={!detailsCollapsed} onclick={toggleDetails}><Icon name="details"/></button><button class="icon-button" class:pressed={pinned} title={pinned?'取消置顶':'置顶'} aria-label={pinned?'取消置顶':'置顶'} onclick={()=>{pinned=!pinned;if(native)void action('pin',pinned);saveWindow();}} aria-pressed={pinned}><Icon name="pin"/></button><div class="menu-anchor" bind:this={menuAnchor}><button class="icon-button" title="更多操作" aria-label="更多操作" aria-expanded={menu} onclick={()=>menu=!menu}><Icon name="more"/></button>{#if menu}<div class="dropdown"><button onclick={settings}>设置</button><button onclick={()=>{menu=false;dialog='notifications';}}>消息通知</button><button onclick={integration}>Codex 接入</button><button onclick={()=>{menu=false;dialog='updates';}}>检查更新</button><hr><button onclick={()=>{if(native)void action('quit');}}>退出看板</button></div>{/if}</div>{/if}</div>
+    <div class="toolbar-actions">{#if view==='main'&&!demoHistory}<button class="icon-button" title="收起为头像球" aria-label="收起为头像球" onclick={collapseDock}><Icon name="dock"/></button><button class="icon-button" class:pressed={detailsCollapsed} title={detailsCollapsed?'展开任务详情':'收起任务详情'} aria-label={detailsCollapsed?'展开任务详情':'收起任务详情'} aria-expanded={!detailsCollapsed} onclick={toggleDetails}><Icon name="details"/></button><button class="icon-button" class:pressed={pinned} title={pinned?'取消置顶':'置顶'} aria-label={pinned?'取消置顶':'置顶'} onclick={()=>{pinned=!pinned;if(native)void action('pin',pinned);saveWindow();}} aria-pressed={pinned}><Icon name="pin"/></button><div class="menu-anchor" bind:this={menuAnchor}><button class="icon-button" title="更多操作" aria-label="更多操作" aria-expanded={menu} onclick={()=>menu=!menu}><Icon name="more"/></button>{#if menu}<div class="dropdown"><button onclick={settings}>设置</button><button onclick={()=>openUtility('notifications')}>消息通知</button>{#if development&&connection.codex_mode==='isolated'}<button onclick={()=>openUtility('weixin-lab')}>微信连接验证 · DEV</button>{/if}<button onclick={integration}>Codex 接入</button><button onclick={()=>openUtility('updates')}>检查更新</button><hr><button onclick={()=>{if(native)void action('quit');}}>退出看板</button></div>{/if}</div>{/if}</div>
     <div class="window-controls"><button title="最小化" aria-label="最小化" onclick={()=>windowAction('minimize')}><Icon name="minimize" size={14}/></button><button title={maximized?'还原':'最大化'} aria-label={maximized?'还原':'最大化'} onclick={()=>windowAction('toggle_maximize')}><Icon name={maximized?'restore':'maximize'} size={14}/></button><button class="window-close" title="关闭到托盘" aria-label={view==='completed'||demoHistory?'关闭已完成记录':'关闭到托盘'} onclick={closeView}><Icon name="close" size={14}/></button></div>
   </header>
   {#if development}<div class="offline-banner" role="status"><strong>DEV · 开发调试版</strong> — DEV 数据独立；{connection.codex_mode==='local'?'接入本机 Codex，使用独立开发连接条目。':connection.codex_mode==='isolated'?'使用隔离 Codex 配置。':'正在确认 Codex 配置模式。'}不更新正式安装。</div>{/if}
-  {#if error || connectionError}<div class="offline-banner" role="status">{error || connectionError}</div>{/if}
+  {#if error || storageError || connectionError || notificationError}<div class="offline-banner" role="status">{[error,storageError,connectionError,notificationError].filter(Boolean).join(' · ')}</div>{/if}
   {#if view==='main'&&!demoHistory}<nav class="filters" aria-label="任务筛选">{#each [{key:'all',label:'全部',count:active.length},{key:'blocked',label:'有卡点',count:blocked.length},{key:'running',label:'执行中',count:active.filter(t=>t.status==='running').length}] as item}<button class:active={filter===item.key} onclick={()=>setFilter(item.key)}>{item.label}<small>{item.count}</small></button>{/each}<span class="filter-meta">{tasks.reduce((sum,t)=>sum+openBlockers(t).length,0)} 个未解除卡点</span></nav>{/if}
   <main class="workspace" class:history={view==='completed'||demoHistory} class:steps-only={Boolean(scope.scope)&&(view==='completed'||demoHistory)}>
-    {#if !scope.scope || view==='main'&&!demoHistory}<aside class="task-sidebar"><div class="list-caption">{view==='completed'||demoHistory?'已完成任务':'任务'}<span>{live.length}</span></div><div class="task-list" data-testid="task-list">{#each live as task (task.id)}<button class="task-row" class:selected={current?.id===task.id} onclick={()=>choose(task)}><div class="task-row-top"><span class="state-dot {task.status}"></span><strong>{taskTitle(task)}</strong></div><div class="task-row-meta"><span class="{task.status}">{status[task.status]}</span><span>{done(task)}/{task.plan.length}</span><span>{elapsed(task.timing,now)}</span></div>{#if openBlockers(task).length}<div class="task-blocked">! {openBlockers(task).length} 个卡点 · {openBlockers(task)[0].title}</div>{:else}<div class="task-current">{task.current_step || `Codex ${runtime[task.runtime]}`}</div>{/if}<div class="progress"><i style:width={`${task.plan.length?done(task)/task.plan.length*100:0}%`}></i></div></button>{/each}{#if !live.length}<div class="empty small">{loading?'正在读取任务':view==='completed'||demoHistory?'暂无已完成任务':'当前筛选下没有任务'}</div>{/if}</div>
+    {#if !scope.scope || view==='main'&&!demoHistory}<aside class="task-sidebar"><div class="list-caption">{view==='completed'||demoHistory?'已完成任务':'任务'}<span>{live.length}</span></div><div class="task-list" data-testid="task-list">{#each live as task (task.id)}<button class="task-row" class:selected={current?.id===task.id} onclick={()=>choose(task)}><div class="task-row-top"><span class="state-dot {task.status}"></span><strong>{taskTitle(task)}</strong></div><div class="task-row-meta"><span class="{task.status}">{status[task.status]}</span><span>{done(task)}/{task.plan.length}</span><span>{elapsed(task.timing,now)}</span></div>{#if openBlockers(task).length}<div class="task-blocked">! {openBlockers(task).length} 个卡点 · {openBlockers(task)[0].title}</div>{:else}<div class="task-current">{task.current_step || `Codex ${runtime[task.runtime]}`}</div>{/if}<div class="progress"><i style:width={`${task.plan.length?done(task)/task.plan.length*100:0}%`}></i></div></button>{/each}{#if !live.length}<div class="empty small">{loading?'正在读取任务':storageError?'任务库不可读，不代表任务已清空':snapshotFailed?'暂时无法读取任务':view==='completed'||demoHistory?'暂无已完成任务':'当前筛选下没有任务'}</div>{/if}</div>
       {#if view==='main'&&!demoHistory&&completed.length}<button class="completed-entry" onclick={()=>{scopeTask=selected;void openCompleted();}}><span>已完成任务 <b>{completed.length}</b></span><span>查看 ↗</span></button>{/if}
     </aside>{/if}
     <div class="detail-pane" hidden={panelDetailsHidden} inert={panelDetailsHidden}>
@@ -205,18 +211,22 @@
     </div>
   </main>
   <footer><span>{demo?'隔离演示数据':`共 ${tasks.length} 个任务 · 完成 ${completed.length}`}</span><span class="footer-actions">{#if current}<button onclick={()=>copy(current.session_id)}>复制会话 ID</button>{/if}<small title="当前看板版本">{appVersion}</small></span></footer>
-  {#if dialog}<div class="modal-backdrop"><div use:trapDialog tabindex="-1" class="modal" class:advanced={advanced&&dialog==='integration'} role="dialog" aria-modal="true" aria-labelledby="modal-heading" aria-busy={modalLocked}><div class="modal-title"><strong id="modal-heading">{modalTitle}</strong><button title={`关闭${modalTitle}`} aria-label={`关闭${modalTitle}`} disabled={modalLocked} onclick={closeDialog}><Icon name="close"/></button></div>
+  </div>{/if}
+  {#if dialog}<div class="modal-backdrop" class:utility-backdrop={Boolean(utility)}><div use:trapDialog tabindex="-1" class="modal" class:advanced={advanced&&dialog==='integration'} role="dialog" aria-modal="true" aria-labelledby="modal-heading" aria-busy={modalLocked}><div class="modal-title"><div class="utility-drag" role="presentation" onpointerdown={utility?startToolbarPointer:undefined} onpointermove={utility?moveToolbarPointer:undefined} onpointerup={utility?endToolbarPointer:undefined} onpointercancel={utility?endToolbarPointer:undefined}><strong id="modal-heading">{modalTitle}</strong>{#if utility}<small>独立窗口 · 始终置顶</small>{/if}</div><button title={`关闭${modalTitle}`} aria-label={`关闭${modalTitle}`} disabled={modalLocked} onclick={closeDialog}><Icon name="close"/></button></div>
     {#if dialog==='settings'}<form class="modal-form" onsubmit={e=>{e.preventDefault();void saveSettings();}}><div class="modal-body"><label class="check"><input type="checkbox" bind:checked={draft.auto_start}>开机自启</label><label class="check"><input type="checkbox" bind:checked={draft.show_taskbar}>在任务栏中显示</label><label class="field">主题<select bind:value={draft.theme}><option value="light">白色</option><option value="dark">黑色</option></select></label><label>头像球任务摘要<select bind:value={draft.dock_summary_mode}><option value="always">固定显示任务摘要</option><option value="hover">鼠标移到头像上显示</option><option value="never">不显示任务摘要</option></select></label><p class="data-hint">拖动标题栏到屏幕外缘，松手收起为头像进度球；点击头像恢复面板。无计划时不估算百分比。</p><label class="check"><input type="checkbox" bind:checked={draft.notifications}>消息浮窗通知</label><label class="field">通知停留<span><input class="seconds" type="number" min="1" max="30" step="1" bind:value={draft.notification_seconds} disabled={!draft.notifications}> 秒</span></label><p class="data-hint">普通通知按设定秒数关闭；卡点通知保留到手动关闭或点击查看。</p>
-      <section class="data-settings" aria-label="外部消息通知"><div class="data-heading"><strong>微信 / 企微 / 飞书</strong><button type="button" disabled={modalLocked || dataLocation.restart_required} onclick={()=>{dialog='notifications';}}>配置消息通知</button></div><p class="data-hint">外部渠道独立开关，不受消息浮窗设置影响。尚未保存的看板设置不会随跳转保存。</p></section>
+      <section class="data-settings" aria-label="外部消息通知"><div class="data-heading"><strong>微信 / 企微 / 飞书</strong><button type="button" disabled={modalLocked || dataLocation.restart_required} onclick={()=>openUtility('notifications')}>配置消息通知</button></div><p class="data-hint">外部渠道独立开关，不受消息浮窗设置影响。尚未保存的看板设置不会随跳转保存。</p></section>
       <section class="data-settings" aria-labelledby="data-heading"><div class="data-heading"><strong id="data-heading">数据目录</strong><button type="button" disabled={dataLoading || dataBusy || !native} onclick={()=>windowAction('data_folder')} title="打开当前数据目录"><Icon name="folder" size={14}/> 打开</button></div><p class="data-current">{dataLoading?'正在读取目录…':dataLocation.current || '目录暂不可用'}</p><label class="data-path">迁移到<input type="text" bind:value={dataPath} disabled={dataLoading || dataBusy || !native || dataLocation.restart_required} placeholder="输入新的完整目录路径" oninput={()=>migrateConfirm=false}></label><p class="data-hint">迁移会复制现有数据，重启后会话将重新载入。{migrationWarning}</p>
       {#if migrateConfirm}<div class="confirm-box" role="alert"><strong>确认迁移数据？</strong><p class="data-current">目标：{dataPath.trim()}</p><p>{migrationWarning}</p><label class="check"><input type="checkbox" bind:checked={producersStopped} disabled={dataBusy}>我已退出所有 Codex 会话及其他看板，暂停全部上报</label><div><button type="button" disabled={dataBusy} onclick={()=>migrateConfirm=false}>取消</button><button type="button" class="primary" disabled={dataBusy || !producersStopped} onclick={migrateData}>{dataBusy?'迁移中…':'确认迁移'}</button></div></div>{:else}<div class="data-actions"><button type="button" disabled={dataLoading || dataBusy || !native || !dataPath.trim() || dataPath.trim()===dataLocation.current || dataLocation.restart_required} onclick={()=>migrateConfirm=true}>迁移数据…</button>{#if dataLocation.restart_required}<button type="button" class="primary" disabled={dataBusy} onclick={()=>windowAction('restart')}>重启并使用新目录</button>{/if}</div>{/if}<div class="form-note" role="status">{dataNote}</div></section>
-      {#if view==='main'}<Updates visible compact blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}
+      {#if native}<div class="data-settings"><button type="button" disabled={modalLocked} onclick={()=>openUtility('updates')}>打开版本更新 ↗</button></div>{:else}<Updates visible compact blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}
       <div class="form-note" role="status">{note}</div></div><div class="modal-actions"><button type="button" onclick={testNotice}>测试通知</button><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>取消</button><button class="primary" disabled={busy || dataBusy || updateBusy || dataLocation.restart_required} title={dataLocation.restart_required?'请先重启看板后再保存设置':undefined} type="submit">{busy?'保存中…':'保存'}</button></div></form>
     {:else if dialog==='notifications'}
       <div class="modal-body"><Notifications visible blocked={busy||dataBusy||dataLocation.restart_required} onbusychange={value=>notificationBusy=value}/></div>
       <div class="modal-actions"><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>关闭</button></div>
+    {:else if dialog==='weixin-lab'&&development}
+      <div class="modal-body"><WeixinLab visible blocked={busy||dataBusy||dataLocation.restart_required} onbusychange={value=>notificationBusy=value}/></div>
+      <div class="modal-actions"><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>关闭</button></div>
     {:else if dialog==='updates'}
-      <div class="modal-body">{#if view==='main'}<Updates visible blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}</div>
+      <div class="modal-body">{#if view==='main'||utility==='updates'}<Updates visible blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}</div>
       <div class="modal-actions"><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>关闭</button></div>
     {:else}
       <div class="modal-body">{#if development || connection.isolated}<div class="environment-note"><strong>{connection.codex_mode==='local'?'本机 Codex · DEV 接入':connection.codex_mode==='isolated'?'DEV · 独立 Codex 接入':'DEV · Codex 接入模式待确认'}</strong>{#if connection.codex_mode==='local'}<p>DEV 数据独立，接入本机 Codex。连接使用独立 codex_floatboard_dev 条目，保留正式连接条目；配置变更仍需你明确确认。</p>{:else if connection.codex_mode==='isolated'}<p>日常 Codex 不读取此处配置。请使用开发专用入口启动同一隔离环境。</p><code>app/desktop/dev-codex.ps1</code>{:else}<p>请以当前 CODEX_HOME 与后端返回的模式为准，尚不声明已连接本机或隔离 Codex。</p>{/if}{#if connection.codex_home}<div class="source-home"><span>当前 CODEX_HOME</span><code>{connection.codex_home}</code></div>{/if}</div>{/if}
@@ -239,6 +249,5 @@
       </div><div class="modal-actions"><span></span><button disabled={modalLocked} onclick={closeDialog}>{wizard.verified?'关闭':'稍后完成'}</button></div>
     {/if}
   </div></div>{/if}
-  </div>
 {/if}
 </div>

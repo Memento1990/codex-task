@@ -108,9 +108,10 @@ impl ChangeDetector{
         }self.previous=Some(current);notices
     }
 }
-pub struct Engine{pub root:PathBuf,gui:PathBuf,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,notifications:Option<crate::notifications::NotificationService>}
+pub struct Engine{pub root:PathBuf,gui:PathBuf,collector_start_error:Option<String>,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,notifications:Option<crate::notifications::NotificationService>}
 impl Engine{
-    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false,notifications:None}}
+    pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,collector_start_error:None,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false,notifications:None}}
+    pub fn set_collector_start_result(&mut self,result:Result<()>){self.collector_start_error=result.err();}
     pub fn start_notifications(&mut self){if !self.restart_required && self.notifications.is_none(){self.notifications=Some(crate::notifications::NotificationService::new(self.root.clone()));}}
     pub fn data_location(&self)->Value{crate::migration::location(&self.root,self.restart_required)}
     pub fn migrate_data(&mut self,path:&Path)->Result<Value>{
@@ -148,12 +149,19 @@ impl Engine{
     }
     fn call_inner(&mut self,method:&str,params:Value)->Result<Value>{match method{
         "snapshot"=>{
-            if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}let tasks=self.store.as_mut().unwrap().tasks()?;
+            // Storage failure is not collector failure, nor an empty task list.
+            // Keep connection diagnostics available even when SQLite cannot read.
+            let loaded=(||{if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}self.store.as_mut().unwrap().tasks()})();
+            let (tasks,storage)=match loaded{Ok(tasks)=>(tasks,json!({"status":"ok","message":""})),Err(_)=>{self.store=None;(Vec::new(),json!({"status":"error","message":"任务数据库读取失败，数据不等于已清空。请保留数据库及 WAL 文件，勿删除、重建或反复重新连接；先备份并检查数据完整性。"}))}};
             if params["notify"]!=false {self.start_notifications();}
-            let notices=if params["notify"]!=false{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
-            let healthy=read_json(&self.root.join("health.json")).is_ok_and(|v|v["status"]=="ok"&&v["at"].as_f64().is_some_and(|at|(0.0..5.).contains(&(now()-at))));
+            let notices=if params["notify"]!=false && storage["status"]=="ok"{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
+            let heartbeat=read_json(&self.root.join("health.json")).ok();
+            let age=heartbeat.as_ref().and_then(|v|v["at"].as_f64()).map(|at|now()-at);
+            let healthy=heartbeat.as_ref().is_some_and(|v|v["status"]=="ok") && age.is_some_and(|age|(0.0..5.).contains(&age));
+            let reason=if heartbeat.is_none(){"missing"}else if age.is_none_or(|age|age<0.){"clock_or_invalid"}else if age.is_some_and(|age|age>=5.){"stale"}else if heartbeat.as_ref().is_some_and(|v|v["status"]!="ok"){"storage_error"}else{"ok"};
+            let collector=json!({"status":reason,"heartbeat_age":age,"pid":heartbeat.as_ref().map(|v|v["pid"].clone()),"version":heartbeat.as_ref().map(|v|v["version"].clone()),"start_error":self.collector_start_error,"data_root":self.root,"guidance":if healthy{"采集心跳正常；不代表任务库一定可读。"}else{"先查看数据目录与数据库读取状态；不要删除库或反复重连。旧采集器交接失败不会停止 Codex，请保留现场后检查。"}});
             if self.connection.is_none()||now()-self.checked_at>3.{let mut connection=crate::bridge::decorate_connection(&self.root,integration::connection_state(&self.root));connection["codex_home"]=json!(integration::codex_home());connection["isolated"]=json!(std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1"));connection["codex_mode"]=json!(std::env::var("FLOATBOARD_CODEX_MODE").unwrap_or_else(|_|"isolated".into()));if !healthy && connection["state"]=="sync_verified"{connection["state"]=json!("error");connection["diagnostics"]=json!(["同步曾验证，但当前采集器离线；请检查数据目录权限，稍后再检查连接。"]);}self.connection=Some(connection);self.checked_at=now();}
-            Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"connection":self.connection,"data_location":self.data_location(),"restart_required":self.restart_required,"now":now()}))
+            Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"collector":collector,"storage":storage,"connection":self.connection,"data_location":self.data_location(),"restart_required":self.restart_required,"now":now()}))
         },
         "preferences"=>save_options(&self.root,&self.gui,&params),
         "preview"=>Ok(json!({"changes":integration::preview(&self.root,params["remove"]==true)?.changes})),

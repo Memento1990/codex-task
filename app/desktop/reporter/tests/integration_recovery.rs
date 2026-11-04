@@ -127,6 +127,15 @@ fn parsed_config(home:&Path)->Value{toml_edit::de::from_str(&String::from_utf8(c
   let p=api::preview_at(&dev,&t.home(),&dev_exe,true).unwrap();api::apply(&dev,&p).unwrap();assert_eq!(config(&t.home()),formal_bytes);assert_eq!(fs::read(api::receipt_path(&t.data())).unwrap(),receipt);
  }
 }
+#[test]fn shared_home_lock_blocks_both_namespaces_without_overwriting_config(){
+ let t=Temp::new();installed(&t);let dev=t.0.join("CodexFloatboard-Dev/shared-local/data");let exe=dev.join("FloatboardReporter.exe");
+ let p=api::preview_at(&dev,&t.home(),&exe,false).unwrap();let before=config(&t.home());
+ let lock=floatboard_core::runtime::ProcessLock::acquire(&t.home().join(".floatboard-config.lock")).unwrap();
+ assert!(api::apply(&dev,&p).unwrap_err().contains("同一 Codex"));
+ assert!(api::preview_at(&t.data(),&t.home(),&t.exe("formal"),false).err().unwrap().contains("同一 Codex"));
+ assert!(api::recover_at(&t.data(),&t.home()).unwrap_err().contains("同一 Codex"));assert_eq!(config(&t.home()),before);
+ drop(lock);api::apply(&dev,&p).unwrap();let both=parsed_config(&t.home());assert!(both["mcp_servers"]["codex_floatboard"].is_object());assert!(both["mcp_servers"]["codex_floatboard_dev"].is_object());
+}
 #[test]fn corrupt_dev_entries_are_not_exempted_as_foreign(){
  for mutation in ["own-server","own-command","own-timeout","foreign-key-spoof","foreign-extra-field"]{
   let t=Temp::new();installed(&t);let dev=t.0.join("CodexFloatboard-Dev/shared-local/data");let bridge=dev.join("runtime/FloatboardBridge.exe");let p=api::preview_at(&dev,&t.home(),&bridge,false).unwrap();api::apply(&dev,&p).unwrap();
