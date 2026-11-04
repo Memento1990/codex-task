@@ -1,3 +1,4 @@
+import type { WeixinLabSnapshot } from './weixin-lab-model';
 export type NotificationChannelId = 'wechat' | 'wecom' | 'feishu';
 export type NotificationEvent = 'blocker_opened' | 'task_completed' | 'blocker_resolved';
 export type NotificationSubscriptions = Record<NotificationEvent, boolean>;
@@ -26,6 +27,7 @@ export interface NotificationSnapshot {
   channels: NotificationChannel[];
   records: NotificationRecord[];
   service_error?: string | null;
+  weixin?: WeixinLabSnapshot;
 }
 export const notificationEvents: { id: NotificationEvent; name: string; detail: string }[] = [
   { id: 'blocker_opened', name: '卡点出现', detail: '需要你介入时通知' },
@@ -47,6 +49,7 @@ export function validNotificationWebhook(id: NotificationChannelId, value: strin
 export function notificationRecordState(status: string): { label: string; tone: 'neutral' | 'success' | 'warning' } {
   switch (status) {
     case 'sent': case 'accepted': case 'delivered': case 'success': return { label: '平台已受理 · 非已读', tone: 'success' };
+    case 'unknown': return { label: '结果未知 · 不自动重发', tone: 'warning' };
     case 'failed': return { label: '投递失败', tone: 'warning' };
     case 'pending': case 'queued': return { label: '等待投递', tone: 'neutral' };
     case 'sending': return { label: '正在投递', tone: 'neutral' };
@@ -57,14 +60,14 @@ export function notificationRecordState(status: string): { label: string; tone: 
   }
 }
 export function notificationChannelState(channel: NotificationChannel): string {
-  if (channel.id === 'wechat') return '暂不可用 · 待接入协议';
+  if (channel.id === 'wechat') return !channel.configured ? '扫码绑定后启用' : channel.enabled ? '已启用 · 请留意会话状态' : '已绑定 · 未启用';
   if (!channel.configured) return '未配置';
   if (!channel.enabled) return '已配置 · 已停用';
   if (['failed', 'error'].includes(channel.status)) return '已配置 · 检查投递记录';
   return '已配置 · 不代表测试通过';
 }
 export function filterNotificationRecords(records: NotificationRecord[], failedOnly: boolean): NotificationRecord[] {
-  return failedOnly ? records.filter(record => record.status === 'failed') : records;
+  return failedOnly ? records.filter(record => ['failed','unknown'].includes(record.status)) : records;
 }
 export function notificationEventName(event: string): string {
   return notificationEvents.find(item => item.id === event)?.name || (event === 'test' ? '测试通知' : '通知事件');

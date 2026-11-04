@@ -1,7 +1,7 @@
 //! Durable, independently polled external notifications. No Engine lock is acquired here.
 //! Disk contains only DPAPI CurrentUser ciphertext for channel credentials. Provider
 //! response text and reqwest errors are deliberately never logged or returned.
-use std::{collections::BTreeMap, fs::{self, File, OpenOptions}, path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::Duration};
+use std::{collections::BTreeMap, fs::{self, File, OpenOptions}, path::{Path, PathBuf}, sync::{Arc, Mutex, RwLock, atomic::{AtomicBool, Ordering}}, thread::{self, JoinHandle}, time::Duration};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -19,38 +19,68 @@ const LOCK_ERROR: &str = "通知数据正忙，请稍后重试";
 struct Channel { id:String, enabled:bool, webhook:String, keyword:String, signing_secret:String }
 impl Default for Channel { fn default()->Self { Self { id:String::new(),enabled:false,webhook:String::new(),keyword:String::new(),signing_secret:String::new() } } }
 #[derive(Clone, Serialize, Deserialize)]
-struct Record { id:String, created_at:f64, channel:String, event:String, title:String, status:String, attempts:u32, error:String, next_at:f64, lease_until:f64 }
+struct Record { #[serde(default)] account_version:String, id:String, created_at:f64, channel:String, event:String, title:String, status:String, attempts:u32, error:String, next_at:f64, lease_until:f64 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct Baseline { status:String, blockers:BTreeMap<String,bool>, revision:i64 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct State { enabled:bool, baseline_reset:bool, subscriptions:BTreeMap<String,bool>, channels:Vec<Channel>, records:Vec<Record>, baseline:BTreeMap<String,Baseline>, revision:u64 }
 impl Default for State { fn default()->Self { Self { enabled:false,baseline_reset:true,subscriptions:BTreeMap::from([("blocker_opened".into(),true),("task_completed".into(),true),("blocker_resolved".into(),false)]),channels:["wechat","wecom","feishu"].into_iter().map(|id|Channel{id:id.into(),..Channel::default()}).collect(),records:vec![],baseline:BTreeMap::new(),revision:0 } } }
-struct Inner { root:PathBuf, stopped:AtomicBool, baseline_needed:AtomicBool, error:Mutex<Option<String>> }
+struct Inner { root:PathBuf, lifecycle:RwLock<()>, stopped:AtomicBool, baseline_needed:AtomicBool, error:Mutex<Option<String>>, weixin:Mutex<Option<Arc<crate::weixin::Weixin>>>, dispatch:Mutex<()> }
 pub struct NotificationService { inner:Arc<Inner>, worker:Mutex<Option<JoinHandle<()>>> }
 impl NotificationService {
     pub fn new(root:PathBuf)->Self {
-        let inner=Arc::new(Inner{root,stopped:AtomicBool::new(false),baseline_needed:AtomicBool::new(true),error:Mutex::new(None)});
+        let inner=Arc::new(Inner{root,lifecycle:RwLock::new(()),stopped:AtomicBool::new(false),baseline_needed:AtomicBool::new(true),error:Mutex::new(None),weixin:Mutex::new(None),dispatch:Mutex::new(())});
         let worker_inner=Arc::clone(&inner);
         let handle=thread::Builder::new().name("notification-outbox".into()).spawn(move||worker(worker_inner)).ok();
         if handle.is_none(){if let Ok(mut error)=inner.error.lock(){*error=Some("通知后台线程无法启动".into());}}
         Self { inner,worker:Mutex::new(handle) }
     }
-    /// Call before moving the data directory. Network is bounded to eight seconds;
-    /// no state/file lock is held while waiting. The worker never touches Engine.
+    /// Drain every foreground operation and worker cycle before migration. Requests
+    /// are bounded, but draining can include multiple sequential network waits.
+    /// Taking the account out releases its process lock even if stopped service
+    /// Arc clones remain alive. Never join the worker while holding lifecycle.
     pub fn shutdown(&self) {
         self.inner.stopped.store(true,Ordering::Release);
+        {
+            let _lifecycle=self.inner.lifecycle.write().unwrap_or_else(|e|e.into_inner());
+            let account=self.inner.weixin.lock().unwrap_or_else(|e|e.into_inner()).take();
+            if let Some(account)=account {account.shutdown();}
+        }
         if let Ok(mut handle)=self.worker.lock() { if let Some(handle)=handle.take() { let _=handle.join(); } }
     }
     pub fn observe(&self,tasks:&[Value])->Result<()> {
+        ensure_running(&self.inner)?;
+        let _lifecycle=self.inner.lifecycle.read().map_err(|_|"通知生命周期不可用")?;
+        ensure_running(&self.inner)?;
         let _activity=crate::runtime::ProcessLock::acquire(&self.inner.root.join("notification-activity.lock"))?;
+        ensure_running(&self.inner)?;
         check_root(&self.inner.root)?;
         observe(&self.inner,tasks)
     }
     pub fn call(&self,method:&str,params:Value)->Result<Value> {
-        if self.inner.stopped.load(Ordering::Acquire) { return Err("通知服务已停止".into()); }
+        ensure_running(&self.inner)?;
+        let _lifecycle=self.inner.lifecycle.read().map_err(|_|"通知生命周期不可用")?;
+        ensure_running(&self.inner)?;
         check_root(&self.inner.root)?;
+        if method=="notification_snapshot" {let _=weixin(&self.inner);return notification_snapshot(&self.inner);}
+        // Cross-process configuration changes serialize with any outbox dispatch.
+        let _activity=crate::runtime::ProcessLock::acquire(&self.inner.root.join("notification-activity.lock")).map_err(|_|"通知正在处理，请稍后重试")?;
+        // Snapshot remains responsive while a bounded provider request is in flight.
+        let _dispatch=self.inner.dispatch.lock().map_err(|_|"通知发送状态不可用")?;
+        ensure_running(&self.inner)?;
+        if method=="notification_weixin_action" {
+            let action=params["action"].as_str().ok_or("缺少微信操作")?;
+            let w=weixin(&self.inner)?;
+            if action=="resume" {let allowed=transaction(&self.inner.root,|s|Ok(s.enabled&&s.channels.iter().any(|c|c.id=="wechat"&&c.enabled)))?;if !allowed{return Err("请先开启外部通知与微信渠道".into());}}
+            if action=="disconnect" {transaction(&self.inner.root,|s|{invalidate_weixin(s);Ok(())})?;}
+            w.call(action,&params)?;
+            return notification_snapshot(&self.inner);
+        }
+        if method=="notification_channel_delete"&&params["id"]=="wechat" {transaction(&self.inner.root,|s|{invalidate_weixin(s);Ok(())})?;weixin(&self.inner)?.call("disconnect",&json!({}))?;}
+        let wx=weixin_snapshot(&self.inner);
         transaction(&self.inner.root,|state| {
+
             match method {
                 "notification_snapshot"=>{},
                 "notification_save"=>{
@@ -64,7 +94,13 @@ impl NotificationService {
                 },
                 "notification_channel_save"=>{
                     let id=channel_id(&params)?;
-                    if id=="wechat" { return Err("微信未接入协议，暂不支持配置".into()); }
+                    let activating=params["enabled"]==true&&!state.channels.iter().any(|c|c.id==id&&c.enabled);
+                    if id=="wechat" {
+                        let enabled=params["enabled"].as_bool().ok_or("渠道开关格式无效")?;
+                        if enabled&&wx["bound"]!=true{return Err("请先扫码并绑定微信收件人".into());}
+                        state.channels.iter_mut().find(|c|c.id==id).unwrap().enabled=enabled;
+                        if !enabled {invalidate_weixin_records(state,"微信渠道已关闭");}
+                    }else{
                     let c=state.channels.iter_mut().find(|c|c.id==id).ok_or("渠道不存在")?;
                     c.enabled=params["enabled"].as_bool().ok_or("渠道开关格式无效")?;
                     c.keyword=bounded(params.get("keyword").and_then(Value::as_str).unwrap_or(""),100);
@@ -72,6 +108,11 @@ impl NotificationService {
                     if params["clear_signing_secret"]==true { c.signing_secret.clear(); }
                     else if let Some(secret)=params.get("signing_secret").and_then(Value::as_str).filter(|s|!s.is_empty()) { if secret.len()>4096{return Err("签名密钥过长".into());} if id!="feishu" {return Err("此渠道不支持签名密钥".into());} c.signing_secret=protect(secret)?; }
                     if c.enabled&&c.webhook.is_empty(){return Err("请先配置 Webhook".into());}
+                    }
+                    // Shared baseline: activation suppresses the next observation for
+                    // ALL channels. This conservative compromise prevents historical
+                    // events between polls leaking into a newly enabled channel.
+                    if activating {state.baseline_reset=true;}
                 },
                 "notification_channel_delete"=>{
                     let id=channel_id(&params)?;
@@ -81,10 +122,9 @@ impl NotificationService {
                 },
                 "notification_test"=>{
                     let id=channel_id(&params)?;
-                    if id=="wechat" {return Err("微信未接入协议，暂不支持测试".into());}
                     let c=state.channels.iter().find(|c|c.id==id).ok_or("渠道不存在")?;
                     if !state.enabled||!c.enabled{return Err("请先开启外部通知与渠道".into());}
-                    if c.webhook.is_empty(){return Err("请先配置 Webhook".into());}
+                    if c.id=="wechat" {if wx["bound"]!=true{return Err("请先绑定微信收件人".into());}}else if c.webhook.is_empty(){return Err("请先配置 Webhook".into());}
                     enqueue(state,id,"test","任务侧窗 · 测试通知",None);
                 },
                 "notification_retry"=>{
@@ -92,7 +132,7 @@ impl NotificationService {
                     let old=state.records.iter().find(|r|r.id==id).cloned().ok_or("通知记录不存在")?;
                     if old.status=="pending" {return Err("通知正在队列中".into());}
                     let c=state.channels.iter().find(|c|c.id==old.channel).ok_or("渠道不存在")?;
-                    if c.id=="wechat"||c.webhook.is_empty(){return Err("渠道尚未配置".into());}
+                    if c.id=="wechat" {if old.status=="unknown"{return Err("微信发送结果未知，可能已送达；为避免重复，请先在手机确认，不支持重试此条".into());}if wx["bound"]!=true{return Err("请先绑定微信收件人".into());}}else if c.webhook.is_empty(){return Err("渠道尚未配置".into());}
                     if !state.enabled||!c.enabled{return Err("请先开启外部通知与渠道".into());}
                     // A manual retry is a new outbox entry; preserve the original audit trail.
                     enqueue(state,&old.channel,&old.event,&old.title,None);
@@ -104,7 +144,10 @@ impl NotificationService {
             let mut result=snapshot(state);
             if let Ok(error)=self.inner.error.lock(){result["service_error"]=json!(*error);}
             Ok(result)
-        })
+        })?;
+        if (method=="notification_save"&&params["enabled"]==false)||(method=="notification_channel_save"&&params["id"]=="wechat"&&params["enabled"]==false){if let Some(w)=self.inner.weixin.lock().map_err(|_|"微信状态不可用")?.as_ref(){w.halt()?;}}
+        sync_weixin(&self.inner)?;
+        notification_snapshot(&self.inner)
     }
 }
 impl Drop for NotificationService { fn drop(&mut self){self.shutdown();} }
@@ -133,7 +176,7 @@ fn lock(root:&Path)->Result<File> {
 fn enqueue(s:&mut State,channel:&str,event:&str,title:&str,id:Option<String>) {
     let id=id.unwrap_or_else(||uuid::Uuid::new_v4().to_string());
     if s.records.iter().any(|r|r.id==id){return;}
-    s.records.push(Record{id,created_at:now(),channel:channel.into(),event:event.into(),title:bounded(title,400),status:"pending".into(),attempts:0,error:String::new(),next_at:0.,lease_until:0.});
+    s.records.push(Record{account_version:String::new(),id,created_at:now(),channel:channel.into(),event:event.into(),title:bounded(title,400),status:"pending".into(),attempts:0,error:String::new(),next_at:0.,lease_until:0.});
 }
 fn prune(s:&mut State,at:f64) {
     for r in &mut s.records {if r.status=="pending"&&at-r.created_at>=EXPIRY&&r.lease_until<=at {r.status="expired".into();r.error="通知已超过30分钟有效期".into();}}
@@ -158,7 +201,7 @@ fn observe(inner:&Inner,tasks:&[Value])->Result<()> {
                     let event=if *open&&previous!=Some(&true){Some("blocker_opened")}else if !*open&&previous==Some(&true){Some("blocker_resolved")}else{None};
                     if let Some(event)=event {let label=task["blockers"].as_array().and_then(|bs|bs.iter().find(|b|b["id"]==bid.as_str())).and_then(|b|b["title"].as_str()).unwrap_or("卡点");events.push((event,bid.clone(),format!("{} · {label}",if *open{"卡点待处理"}else{"卡点已解除"})));}
                 }
-                let channels:Vec<String>=state.channels.iter().filter(|c|c.id!="wechat"&&c.enabled&&!c.webhook.is_empty()).map(|c|c.id.clone()).collect();
+                let channels:Vec<String>=state.channels.iter().filter(|c|c.enabled&&(c.id=="wechat"||!c.webhook.is_empty())).map(|c|c.id.clone()).collect();
                 for (event,stable,label) in events {if state.subscriptions.get(event)!=Some(&true){continue;}
                     let title=format!("{label} · {}",task["title"].as_str().unwrap_or("任务"));
                     for channel in &channels {let key=crate::store::hash(format!("{id}\0{event}\0{stable}\0{}\0{channel}",next.revision).as_bytes());enqueue(state,channel,event,&title,Some(key));}
@@ -175,32 +218,54 @@ fn check_root(root:&Path)->Result<()> {
     let normalize=|p:&Path|p.to_string_lossy().trim_start_matches(r"\\?\").trim_end_matches(['\\','/']).to_lowercase();
     if normalize(&resolved)!=normalize(root){return Err("数据目录已迁移，请重新初始化通知服务".into());}Ok(())
 }
+fn ensure_running(inner:&Inner)->Result<()> {if inner.stopped.load(Ordering::Acquire){Err("通知服务已停止".into())}else{Ok(())}}
+
+// Observation is optional: corrupt task storage must not disable explicit tests,
+// durable outbox delivery, or restoration of an independently stored account.
+// Caller owns lifecycle then activity; dispatch always follows those locks.
+fn worker_cycle(inner:&Inner,transport:impl FnOnce(&Channel,&Record)->Outcome)->Result<()> {
+    ensure_running(inner)?;
+    let sync_result={let _gate=inner.dispatch.lock().map_err(|_|"通知发送状态不可用")?;ensure_running(inner)?;sync_weixin(inner)};
+    let observation=(||{let mut store=crate::store::Store::open(&inner.root,true)?;let tasks=store.tasks()?;observe(inner,&tasks)})();
+    ensure_running(inner)?;
+    let delivery=deliver_one(inner,transport);
+    sync_result.and(observation).and(delivery)
+}
 fn worker(inner:Arc<Inner>) {
     let client=reqwest::blocking::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(8)).connect_timeout(Duration::from_secs(4)).build().ok();
     if client.is_none(){if let Ok(mut error)=inner.error.lock(){*error=Some("通知网络客户端初始化失败".into());}return;}
     while !inner.stopped.load(Ordering::Acquire) {
-        if let Ok(_activity)=crate::runtime::ProcessLock::acquire(&inner.root.join("notification-activity.lock")) {
-            if check_root(&inner.root).is_err(){break;}
-            let result=(||{
-                let mut store=crate::store::Store::open(&inner.root,true)?;
-                let tasks=store.tasks()?;observe(&inner,&tasks)?;
-                if !inner.stopped.load(Ordering::Acquire){if let Some(client)=&client {deliver_one(&inner,|channel,record|send(client,channel,record))?;}}
-                Ok::<_,String>(())
-            })();
-            if let Ok(mut error)=inner.error.lock(){*error=result.err();}
+        {
+            let Ok(_lifecycle)=inner.lifecycle.read()else{break};
+            if inner.stopped.load(Ordering::Acquire){break;}
+            if let Ok(_activity)=crate::runtime::ProcessLock::acquire(&inner.root.join("notification-activity.lock")) {
+                if inner.stopped.load(Ordering::Acquire)||check_root(&inner.root).is_err(){break;}
+                let result=worker_cycle(&inner,|channel,record|send(client.as_ref().unwrap(),channel,record));
+                if let Ok(mut error)=inner.error.lock(){*error=result.err();}
+            }
         }
         for _ in 0..10 {if inner.stopped.load(Ordering::Acquire){break;}thread::sleep(Duration::from_millis(100));}
     }
 }
 #[derive(Debug,PartialEq)]
-enum Outcome { Accepted, Temporary(&'static str), Permanent(&'static str) }
+enum Outcome { Unknown, Accepted, Temporary(&'static str), Permanent(&'static str) }
 fn deliver_one(inner:&Inner,transport:impl FnOnce(&Channel,&Record)->Outcome)->Result<()> {
+    let Ok(_dispatch)=inner.dispatch.try_lock()else{return Ok(())};
+    ensure_running(inner)?;
+    let wx=weixin_snapshot(inner);
     let work=transaction(&inner.root,|state|{
         let at=now();prune(state,at);
         let Some(index)=state.records.iter().position(|r|r.status=="pending"&&r.next_at<=at&&r.lease_until<=at)else{return Ok(None)};
         let channel=state.channels.iter().find(|c|c.id==state.records[index].channel).cloned();
         let record=&mut state.records[index];
-        let Some(channel)=channel.filter(|c|c.id!="wechat"&&!c.webhook.is_empty()&&state.enabled&&c.enabled)else{record.status="skipped".into();record.error="通知已关闭或渠道不可用".into();return Ok(None)};
+        // Only the process owning the account may dispatch Weixin. A second
+        // instance must not discard its owner's durable queue.
+        if channel.as_ref().is_some_and(|c|c.id=="wechat")&&wx["bound"]!=true{return Ok(None);}
+        let Some(channel)=channel.filter(|c|(c.id=="wechat"&&wx["bound"]==true||c.id!="wechat"&&!c.webhook.is_empty())&&state.enabled&&c.enabled)else{record.status="skipped".into();record.error="通知已关闭或渠道不可用".into();return Ok(None)};
+        if channel.id=="wechat" {
+            if record.lease_until>0.&&record.attempts>0 {record.status="unknown".into();record.error="上次发送中断，可能已送达；不会自动重发".into();return Ok(None);}
+            record.account_version=wx["account_version"].as_str().unwrap_or("").into();
+        }
         // Persist claim BEFORE external side effect. An OS sharing lock serializes
         // every claim across processes; lease allows recovery after process crash.
         if record.attempts>=3 {record.status="failed".into();record.error="自动发送次数已达上限".into();return Ok(None);}
@@ -208,11 +273,17 @@ fn deliver_one(inner:&Inner,transport:impl FnOnce(&Channel,&Record)->Outcome)->R
     })?;
     let Some((channel,record))=work else{return Ok(())};
     if inner.stopped.load(Ordering::Acquire){return Ok(());}
-    let outcome=transport(&channel,&record);
+    let outcome=if channel.id=="wechat" {
+        match weixin(inner)?.send(&record.account_version,&record.id,&record.title) {
+            crate::weixin::SendOutcome::Accepted=>Outcome::Accepted,
+            crate::weixin::SendOutcome::Unknown=>Outcome::Unknown,
+            crate::weixin::SendOutcome::Failed=>Outcome::Permanent("微信未受理或会话不可用，请重新连接")
+        }
+    }else{transport(&channel,&record)};
     transaction(&inner.root,|state|{
         if let Some(r)=state.records.iter_mut().find(|r|r.id==record.id&&r.status=="pending"&&r.attempts==record.attempts) {
             r.lease_until=0.;
-            match outcome {Outcome::Accepted=>{r.status="accepted".into();r.error.clear();},Outcome::Permanent(error)=>{r.status="failed".into();r.error=error.into();},Outcome::Temporary(error)=>{r.error=error.into();if r.attempts>=3{r.status="failed".into();}else{r.next_at=now()+if r.attempts==1{5.}else{30.};}}}
+            match outcome {Outcome::Unknown=>{r.status="unknown".into();r.error="发送结果未知，可能已送达；不会自动重发".into();},Outcome::Accepted=>{r.status="accepted".into();r.error.clear();},Outcome::Permanent(error)=>{r.status="failed".into();r.error=error.into();},Outcome::Temporary(error)=>{r.error=error.into();if r.attempts>=3{r.status="failed".into();}else{r.next_at=now()+if r.attempts==1{5.}else{30.};}}}
         }Ok(())
     })
 }
@@ -270,4 +341,16 @@ fn crypt(bytes:&[u8],encrypt:bool)->Result<Vec<u8>> {
     let ok=unsafe{if encrypt{CryptProtectData(&input,std::ptr::null(),std::ptr::null(),std::ptr::null(),std::ptr::null(),CRYPTPROTECT_UI_FORBIDDEN,&mut output)}else{CryptUnprotectData(&input,std::ptr::null_mut(),std::ptr::null(),std::ptr::null(),std::ptr::null(),CRYPTPROTECT_UI_FORBIDDEN,&mut output)}};
     if ok==0{return Err("Windows 当前用户凭据保护失败".into());}
     let result=unsafe{std::slice::from_raw_parts(output.pbData,output.cbData as usize).to_vec()};unsafe{LocalFree(output.pbData as *mut _);};Ok(result)
+}
+
+fn invalidate_weixin_records(s:&mut State,reason:&str){for r in &mut s.records{if r.channel=="wechat"&&r.status=="pending"{r.status=if r.lease_until>0.{"unknown"}else{"skipped"}.into();r.error=reason.into();}}}
+fn invalidate_weixin(s:&mut State){if let Some(c)=s.channels.iter_mut().find(|c|c.id=="wechat"){c.enabled=false;}invalidate_weixin_records(s,"微信账号已解除，旧队列不再发送");}
+fn weixin(inner:&Inner)->Result<Arc<crate::weixin::Weixin>>{let mut slot=inner.weixin.lock().map_err(|_|"微信状态不可用")?;ensure_running(inner)?;if slot.is_none(){*slot=Some(Arc::new(crate::weixin::Weixin::new(inner.root.join("weixin-production"))?));}Ok(slot.as_ref().unwrap().clone())}
+fn weixin_snapshot(inner:&Inner)->Value{inner.weixin.lock().ok().and_then(|s|s.as_ref().and_then(|w|w.call("snapshot",&json!({})).ok())).unwrap_or_else(||json!({"status":"disconnected","busy":false,"active":false,"logged_in":false,"bound":false,"restored":false,"error":""}))}
+fn notification_snapshot(inner:&Inner)->Result<Value>{let wx=weixin_snapshot(inner);transaction(&inner.root,|s|{let mut result=snapshot(s);result["weixin"]=wx.clone();if let Some(c)=result["channels"].as_array_mut().and_then(|cs|cs.iter_mut().find(|c|c["id"]=="wechat")){c["configured"]=wx["bound"].clone();c["status"]=json!(if wx["bound"]!=true{"unconfigured"}else if c["enabled"]!=true{"disabled"}else{"ready"});}if let Ok(e)=inner.error.lock(){result["service_error"]=json!(*e);}Ok(result)})}
+fn sync_weixin(inner:&Inner)->Result<()>{
+ let enabled=transaction(&inner.root,|s|Ok(s.enabled&&s.channels.iter().any(|c|c.id=="wechat"&&c.enabled)))?;
+ if enabled {let w=weixin(inner)?;let s=w.call("snapshot",&json!({}))?;if s["bound"]==true&&(s["status"]=="restored"||s["status"]=="bound")&&s["active"]!=true&&s["error"].as_str().unwrap_or("").is_empty(){w.call("resume",&json!({}))?;}}
+ else if let Some(w)=inner.weixin.lock().map_err(|_|"微信状态不可用")?.as_ref(){let s=w.call("snapshot",&json!({}))?;if s["bound"]==true&&s["active"]==true{w.halt()?;}}
+ Ok(())
 }

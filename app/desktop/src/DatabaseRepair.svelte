@@ -1,0 +1,15 @@
+<script lang="ts">
+ import { call, native } from './host';
+ let {blocked=false,onbusychange=(_v:boolean)=>{}}:{blocked?:boolean;onbusychange?:(v:boolean)=>void}=$props();
+ type Report={status?:string;partial?:boolean;source_copy_integrity_ok?:boolean;recovery?:{recovered_tasks:number;reconstructed_current_completions:number;destination_integrity_ok:boolean};paths?:Record<string,string>;[key:string]:unknown};
+ let busy=$state(false),confirm=$state(false),error=$state(''),report=$state<Report|null>(null);
+ $effect(()=>onbusychange(busy));
+ async function run(action:string){if(busy||blocked||!native)return;busy=true;error='';try{report=await call<Report>('database_repair',{action,...(action==='recover_copy'?{confirmed:true}:{})});confirm=false;}catch{error='无法安全复制或检查数据库。文件可能正被上报进程锁定；原数据库未替换，请保留数据库及 WAL，不要删除或反复重新连接。';}finally{busy=false;}}
+ const labels:Record<string,string>={inspected_copy:'副本检查完成',unstable_source:'源文件仍在变化，本次副本不作为可靠恢复依据',unreadable_copy:'副本无法读取',no_readable_tasks:'未找到可安全恢复的任务',partial_recovery:'已生成独立恢复副本（部分恢复）',recovery_failed:'恢复副本验证失败'};
+</script>
+<section class="repair" aria-labelledby="repair-heading"><strong id="repair-heading">数据库检查与副本恢复</strong><p>先复制数据库及 WAL，再检查副本。不会修复、删除或替换当前数据库，也不会停止正在运行的 Codex / Reporter。</p><div class="buttons"><button type="button" disabled={blocked||busy||!native} onclick={()=>run('inspect')}>{busy?'处理中…':'检查独立副本'}</button><button type="button" disabled={blocked||busy||!native} onclick={()=>confirm=true}>恢复可读任务到副本…</button></div>
+ {#if confirm}<div class="confirmation" role="group" aria-label="恢复副本确认"><strong>仅恢复可读的最新任务快照</strong><p>会在当前数据目录旁的 control/database-recovery 下保存源文件副本、报告和独立恢复库。历史事件、耗时和完整归档不会恢复；副本不会自动接管看板。运行中的旧版写入进程无法协调，因此不提供直接替换。</p><div class="buttons"><button type="button" disabled={busy} onclick={()=>confirm=false}>取消</button><button type="button" class="primary" disabled={blocked||busy} onclick={()=>run('recover_copy')}>确认创建恢复副本</button></div></div>{/if}
+ {#if error}<p role="alert">{error}</p>{/if}
+ {#if report}<div role="status"><strong>{labels[report.status||'']||'副本操作已完成'}</strong>{#if report.source_copy_integrity_ok!==undefined}<p>源副本完整性：{report.source_copy_integrity_ok?'通过':'未通过或无法验证'}</p>{/if}{#if report.recovery}<p>恢复任务 {report.recovery.recovered_tasks} 个；从最新快照重建完成记录 {report.recovery.reconstructed_current_completions} 个。恢复库完整性：{report.recovery.destination_integrity_ok?'通过':'未通过'}。</p>{/if}<p>当前看板仍使用原数据库。完整报告与副本保存在数据目录旁的 control/database-recovery；请通过“打开”进入数据目录后查看其上级目录。</p>{#if report.paths?.report}<code>{report.paths.report}</code>{/if}{#if report.paths?.recovered_database}<code>{report.paths.recovered_database}</code>{/if}</div>{/if}
+</section>
+<style>.repair{display:grid;gap:8px;border-top:1px solid var(--divider);padding-top:14px;font-size:12px;line-height:1.65}.repair p{margin:0;color:var(--muted);overflow-wrap:anywhere}.repair code{display:block;overflow-wrap:anywhere;user-select:all;font-size:11px}.buttons{display:flex;gap:8px;flex-wrap:wrap}.confirmation{padding:12px;border:1px solid var(--stroke);background:var(--layer);border-radius:5px;display:grid;gap:8px}</style>

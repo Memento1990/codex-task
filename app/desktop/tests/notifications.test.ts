@@ -48,10 +48,13 @@ test('accepted means platform acceptance, never read; unknown status remains unk
   assert.equal(notificationRecordState('new-status').label, '状态待确认');
 });
 
-test('configuration cannot imply tested or online and WeChat remains unavailable', () => {
+test('configuration cannot imply delivery and WeChat requires explicit binding and enablement', () => {
   const channel: NotificationChannel = { id: 'wecom', name: '企微', enabled: true, configured: true, status: 'ready', keyword: '', has_signing_secret: false };
   assert.equal(notificationChannelState(channel), '已配置 · 不代表测试通过');
-  assert.equal(notificationChannelState({ ...channel, id: 'wechat' }), '暂不可用 · 待接入协议');
+  assert.equal(notificationChannelState({ ...channel, id: 'wechat' }), '已启用 · 请留意会话状态');
+  assert.equal(notificationChannelState({ ...channel, id: 'wechat',configured:false }), '扫码绑定后启用');
+  assert.equal(notificationChannelState({ ...channel, id: 'wechat',enabled:false }), '已绑定 · 未启用');
+  assert.deepEqual(notificationRecordState('unknown'),{label:'结果未知 · 不自动重发',tone:'warning'});
   assert.equal(notificationChannelState({ ...channel, configured: false }), '未配置');
   assert.equal(notificationChannelState({ ...channel, enabled: false }), '已配置 · 已停用');
 });

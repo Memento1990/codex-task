@@ -7,6 +7,7 @@
   import Updates from './Updates.svelte';
   import Notifications from './Notifications.svelte';
   import WeixinLab from './WeixinLab.svelte';
+  import DatabaseRepair from './DatabaseRepair.svelte';
   import { appVersion } from './version';
   import { utilityKind, type UtilityKind } from './utility-window';
   type Scope = {task_id?: string; scope?: string; tab?: number};
@@ -36,7 +37,7 @@
   $effect(()=>{document.documentElement.classList.toggle('dock-transparent',dockCollapsed);return()=>document.documentElement.classList.remove('dock-transparent');});
   $effect(()=>{if(native&&view==='main'){const enabled=!dialog&&!menu&&!demoHistory;void action('dock_set_enabled',enabled).catch(()=>{});}});
   $effect(()=>{if(native&&view==='main'){const collapsed=detailsCollapsed&&!dialog;void action('details_collapse',collapsed).catch(()=>{});}});
-  let updateBusy = $state(false), notificationBusy = $state(false);
+  let updateBusy = $state(false), repairBusy = $state(false), notificationBusy = $state(false);
   let dialog = $state<'settings'|'integration'|'updates'|'notifications'|'weixin-lab'|null>(null), draft = $state<Options>({...defaults}), busy = $state(false), note = $state(''), advanced = $state(false), disconnectConfirm = $state(false);
   let changes = $state<{title:string;key:string;before:string;after:string;diff:string}[]>([]);
   let demoHistory = $state(false), scopeTask = $state('');
@@ -51,7 +52,7 @@
   function escapeDialog(event:KeyboardEvent){if(event.key!=='Escape'||event.defaultPrevented)return;if(dockCollapsed){event.preventDefault();void hoverDock(false);return;}if(dialog){event.preventDefault();if(modalLocked)return;if(migrateConfirm){migrateConfirm=false;return;}if(recoveryConfirm){recoveryConfirm=false;return;}if(upgradeConfirm){upgradeConfirm=false;return;}if(disconnectConfirm){disconnectConfirm=false;return;}closeDialog();}else if(view==='completed'||demoHistory)void closeView();else menu=false;}
   const migrationWarning = '迁移前先用新版重新连接，然后完整退出所有 Codex / app-server 会话及其他看板实例，暂停全部上报；迁移不是在线操作。完成后重启看板，再启动 Codex 并按正常流程信任新版 Hook。旧版 Hook 不支持迁移后的版本恢复。必须保留旧目录用于路径重定向，不可删除。';
   let dataLocation = $state<DataLocation>({current:'',restart_required:false}), dataPath = $state(''), dataNote = $state(''), dataLoading = $state(false), dataBusy = $state(false), migrateConfirm = $state(false), producersStopped = $state(false);
-  let modalLocked=$derived(busy||dataBusy||updateBusy||notificationBusy||(Boolean(utility)&&loading));
+  let modalLocked=$derived(busy||dataBusy||updateBusy||repairBusy||notificationBusy||(Boolean(utility)&&loading));
   const previewNotice = createTestNoticeFactory();
   let connectionLabel = $derived(loading?'正在读取':storageError?'任务库异常':snapshotFailed?'数据服务异常':!healthy?'采集心跳异常':connectionStatus(connection));
   type Toast = Notice & {key:number;remaining:number;started:number;timer?:ReturnType<typeof setTimeout>};
@@ -83,6 +84,7 @@
     catch(e){dataNote='读取数据目录失败：'+String(e);}finally{dataLoading=false;}
   }
   async function migrateData() {
+    if(repairBusy||updateBusy||busy||dataBusy)return;
     dataBusy=true;dataNote='';
     try {dataLocation=await call<DataLocation>('migrate_data',{path:dataPath.trim(),producers_stopped:producersStopped});dataPath=dataLocation.current;migrateConfirm=false;dataNote=dataLocation.restart_required?'迁移完成。请重启看板，保留旧目录用于路径重定向，不可删除。':'数据目录已更新。';}
     catch(e){dataNote='迁移失败：'+String(e);}finally{dataBusy=false;}
@@ -217,8 +219,9 @@
       <section class="data-settings" aria-label="外部消息通知"><div class="data-heading"><strong>微信 / 企微 / 飞书</strong><button type="button" disabled={modalLocked || dataLocation.restart_required} onclick={()=>openUtility('notifications')}>配置消息通知</button></div><p class="data-hint">外部渠道独立开关，不受消息浮窗设置影响。尚未保存的看板设置不会随跳转保存。</p></section>
       <section class="data-settings" aria-labelledby="data-heading"><div class="data-heading"><strong id="data-heading">数据目录</strong><button type="button" disabled={dataLoading || dataBusy || !native} onclick={()=>windowAction('data_folder')} title="打开当前数据目录"><Icon name="folder" size={14}/> 打开</button></div><p class="data-current">{dataLoading?'正在读取目录…':dataLocation.current || '目录暂不可用'}</p><label class="data-path">迁移到<input type="text" bind:value={dataPath} disabled={dataLoading || dataBusy || !native || dataLocation.restart_required} placeholder="输入新的完整目录路径" oninput={()=>migrateConfirm=false}></label><p class="data-hint">迁移会复制现有数据，重启后会话将重新载入。{migrationWarning}</p>
       {#if migrateConfirm}<div class="confirm-box" role="alert"><strong>确认迁移数据？</strong><p class="data-current">目标：{dataPath.trim()}</p><p>{migrationWarning}</p><label class="check"><input type="checkbox" bind:checked={producersStopped} disabled={dataBusy}>我已退出所有 Codex 会话及其他看板，暂停全部上报</label><div><button type="button" disabled={dataBusy} onclick={()=>migrateConfirm=false}>取消</button><button type="button" class="primary" disabled={dataBusy || !producersStopped} onclick={migrateData}>{dataBusy?'迁移中…':'确认迁移'}</button></div></div>{:else}<div class="data-actions"><button type="button" disabled={dataLoading || dataBusy || !native || !dataPath.trim() || dataPath.trim()===dataLocation.current || dataLocation.restart_required} onclick={()=>migrateConfirm=true}>迁移数据…</button>{#if dataLocation.restart_required}<button type="button" class="primary" disabled={dataBusy} onclick={()=>windowAction('restart')}>重启并使用新目录</button>{/if}</div>{/if}<div class="form-note" role="status">{dataNote}</div></section>
+      <DatabaseRepair blocked={busy||dataBusy||updateBusy||dataLocation.restart_required} onbusychange={value=>repairBusy=value}/>
       {#if native}<div class="data-settings"><button type="button" disabled={modalLocked} onclick={()=>openUtility('updates')}>打开版本更新 ↗</button></div>{:else}<Updates visible compact blocked={busy||dataBusy||dataLocation.restart_required} onbusy={value=>updateBusy=value}/>{/if}
-      <div class="form-note" role="status">{note}</div></div><div class="modal-actions"><button type="button" onclick={testNotice}>测试通知</button><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>取消</button><button class="primary" disabled={busy || dataBusy || updateBusy || dataLocation.restart_required} title={dataLocation.restart_required?'请先重启看板后再保存设置':undefined} type="submit">{busy?'保存中…':'保存'}</button></div></form>
+      <div class="form-note" role="status">{note}</div></div><div class="modal-actions"><button type="button" onclick={testNotice}>测试通知</button><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>取消</button><button class="primary" disabled={busy || dataBusy || updateBusy || repairBusy || dataLocation.restart_required} title={dataLocation.restart_required?'请先重启看板后再保存设置':undefined} type="submit">{busy?'保存中…':'保存'}</button></div></form>
     {:else if dialog==='notifications'}
       <div class="modal-body"><Notifications visible blocked={busy||dataBusy||dataLocation.restart_required} onbusychange={value=>notificationBusy=value}/></div>
       <div class="modal-actions"><span></span><button type="button" disabled={modalLocked} onclick={closeDialog}>关闭</button></div>

@@ -1,5 +1,6 @@
-param([Parameter(Mandatory=$true)][string]$TargetDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Version='0.12.0',[switch]$SignUpdate)
+param([Parameter(Mandatory=$true)][string]$TargetDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Version,[switch]$SignUpdate)
 $ErrorActionPreference='Stop'
+if(!$Version){$Version=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'package.json') -Raw | ConvertFrom-Json).version}
 if($Version -notmatch '^\d+\.\d+\.\d+$'){throw 'Only stable semantic versions supported'}
 $target=(Resolve-Path -LiteralPath $TargetDirectory).Path
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path

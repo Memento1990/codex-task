@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import WeixinChannel from './WeixinChannel.svelte';
   import { call, native } from './host';
   import {
     filterNotificationRecords, notificationChannelNames, notificationChannelState, notificationEvents,
@@ -13,6 +14,7 @@
   let { visible = true, blocked = false, onbusychange = (_busy: boolean) => {} }:
     { visible?: boolean; blocked?: boolean; onbusychange?: (busy: boolean) => void } = $props();
   let snapshot = $state<NotificationSnapshot | null>(null);
+  let weixinBusy = $state(false);
   let pending = $state(false), error = $state(''), feedback = $state('');
   let tab = $state<'channels' | 'records'>('channels'), failedOnly = $state(false);
   let editing = $state<NotificationChannelId | null>(null);
@@ -22,13 +24,13 @@
   type Confirmation = { kind: 'save' | 'delete' | 'test' | 'retry' | 'clear'; id: string };
   let confirmation = $state<Confirmation | null>(null);
   let revision = 0, disposed = false, polling = false;
-  let locked = $derived(pending || blocked || !native || !snapshot);
+  let locked = $derived(pending || weixinBusy || blocked || !native || !snapshot);
   let records = $derived(filterNotificationRecords(snapshot?.records ?? [], failedOnly));
   let preview = $derived(notificationPreview(previewEvent));
   let editedChannel = $derived(snapshot?.channels.find(channel => channel.id === editing));
   let canSaveChannel = $derived(!!editing && ((!webhook.trim() && !!editedChannel?.configured) || validNotificationWebhook(editing, webhook))
     && !(clearSigningSecret && !!signingSecret.trim()));
-  $effect(() => { onbusychange(pending); });
+  $effect(() => { onbusychange(pending || weixinBusy); });
   $effect(() => { if (!visible) { clearEditor(); confirmation = null; } });
 
   function clearEditor() {
@@ -51,11 +53,11 @@
     } finally { if (!disposed) pending = false; }
   }
   async function poll() {
-    if (!native || !visible || pending || polling) return;
+    if (!native || !visible || pending || weixinBusy || polling) return;
     const observed = revision; polling = true;
     try {
       const next = await call<NotificationSnapshot>('notification_snapshot');
-      if (!disposed && observed === revision && !pending) { snapshot = next; }
+      if (!disposed && observed === revision && !pending && !weixinBusy) { snapshot = next; }
     } catch {
       if (!disposed && observed === revision) error = '暂时无法刷新通知状态，请确认本地通知服务正在运行。';
     } finally { polling = false; }
@@ -106,9 +108,9 @@
   {:else if !snapshot && !error}<p class="hint" role="status">正在读取通知设置…</p>{/if}
   {#if snapshot && !snapshot.enabled}<p class="notice">外部通知已暂停。桌面浮窗不受影响；重新启用后不会补发暂停期间的事件。</p>{/if}
   <div class="tabs" role="group" aria-label="通知视图">
-    <button type="button" class:active={tab === 'channels'} aria-pressed={tab === 'channels'} onclick={() => { tab = 'channels'; confirmation = null; }}>渠道与订阅</button>
-    <button type="button" class:active={tab === 'records'} aria-pressed={tab === 'records'} onclick={() => { tab = 'records'; confirmation = null; }}>发送记录{snapshot ? ` · ${snapshot.records.length}` : ''}</button>
-    <button type="button" class="refresh" disabled={!native || pending || blocked} onclick={() => request('notification_snapshot', {}, '通知状态已刷新')}>刷新</button>
+    <button type="button" class:active={tab === 'channels'} aria-pressed={tab === 'channels'} disabled={weixinBusy||pending} onclick={() => { tab = 'channels'; confirmation = null; }}>渠道与订阅</button>
+    <button type="button" class:active={tab === 'records'} aria-pressed={tab === 'records'} disabled={weixinBusy||pending} onclick={() => { tab = 'records'; confirmation = null; }}>发送记录{snapshot ? ` · ${snapshot.records.length}` : ''}</button>
+    <button type="button" class="refresh" disabled={!native || pending || weixinBusy || blocked} onclick={() => request('notification_snapshot', {}, '通知状态已刷新')}>刷新</button>
   </div>
   {#if error}<p class="notice" role="alert">{error}</p>{/if}
   {#if snapshot?.service_error}<p class="notice" role="alert">本地通知服务异常，可能无法投递。请检查本地服务状态后刷新；此处不显示原始错误或凭据。</p>{/if}
@@ -118,15 +120,16 @@
     <div class="channels">
       {#each (['wechat', 'wecom', 'feishu'] as NotificationChannelId[]) as id}
         {@const channel = snapshot?.channels.find(item => item.id === id)}
-        <article class="channel" class:unavailable={id === 'wechat'}>
+        <article class="channel">
           <div class="channel-top"><span class="glyph" aria-hidden="true">{id === 'wechat' ? '微' : id === 'wecom' ? '企' : '飞'}</span><h3>{notificationChannelNames[id]}</h3></div>
-          <p class="hint">{id === 'wechat' ? '个人微信 · 协议尚未选定' : '群机器人 · Webhook'}</p>
-          <p class="channel-state">{id === 'wechat' ? '暂不可用 · 待接入协议' : channel ? notificationChannelState(channel) : '状态未读取'}</p>
-          {#if id === 'wechat'}<p class="hint">不提供扫码、二维码或在线状态。建议先使用企微或飞书。</p>
+          <p class="hint">{id === 'wechat' ? '个人微信 · 扫码绑定' : '群机器人 · Webhook'}</p>
+          <p class="channel-state">{channel ? notificationChannelState(channel) : '状态未读取'}</p>
+          {#if id === 'wechat'}<p class="hint">绑定扫码账号，将已订阅的任务变化发送到微信。</p>
           {:else}<div class="actions"><button type="button" disabled={locked || !channel || !!editing} onclick={() => channel && editChannel(channel)}>{channel?.configured ? '管理配置' : '配置 Webhook'}</button><button type="button" disabled={locked || !channel?.configured || !channel.enabled || !snapshot?.enabled} onclick={() => ask('test', id)}>发送测试</button></div>{/if}
         </article>
       {/each}
     </div>
+    <section class="editor" aria-label="个人微信配置"><div class="section-title"><h2>微信 · 连接与日常通知</h2></div><WeixinChannel snapshot={snapshot?.weixin} enabled={snapshot?.channels.find(c=>c.id==='wechat')?.enabled ?? false} blocked={blocked||pending} onbusychange={value=>weixinBusy=value} onupdate={value=>{++revision;snapshot=value;}}/></section>
     {#if editing}
       <section class="editor" aria-label="渠道配置">
         <div class="section-title"><h2>{notificationChannelNames[editing]} · 连接配置</h2><button type="button" disabled={pending} onclick={() => { clearEditor(); confirmation = null; }}>取消编辑</button></div>
@@ -150,10 +153,10 @@
       <p class="hint">所选事件发送至所有已启用且已配置的渠道。</p>
     </section>
     <section class="preview" aria-label="通知内容预览"><div class="section-title"><h2>通知预览</h2><label class="preview-select">事件<select bind:value={previewEvent}>{#each notificationEvents as event}<option value={event.id}>{event.name}</option>{/each}</select></label></div><div class="message"><strong>{preview.title}</strong><p>{preview.body}</p></div><p class="hint">示例内容，不会发送。实际通知按渠道格式呈现，包含所设安全关键词。</p></section>
-    <details class="policy"><summary>发送策略与隐私</summary><p>仅本地通知进程运行且网络可用时才可能送达。退出、休眠或断网会影响投递，请勿将它用于紧急告警。</p><p>默认不发送本地路径、代码或日志；任务标题由用户提供，本身可能含敏感信息，请在命名和选定接收群时留意。</p><p>已配置不代表测试通过；平台受理不代表对方已读。失败可能自动重试，手动重试也可能重复送达。</p></details>
+    <details class="policy"><summary>发送策略与隐私</summary><p>仅本地通知进程运行且网络可用时才可能送达。退出、休眠或断网会影响投递，请勿将它用于紧急告警。</p><p>默认不发送本地路径、代码或日志；任务标题由用户提供，本身可能含敏感信息，请在命名和选定接收群时留意。</p><p>已配置不代表测试通过；平台受理不代表对方已读。企微、飞书失败可能自动重试；微信结果未知不自动重发。手动重试也可能重复送达。</p></details>
   {:else}
-    <div class="section-title records-heading"><h2>最近发送</h2><label class="check"><input type="checkbox" bind:checked={failedOnly}>仅看失败</label><button type="button" disabled={locked || !snapshot?.records.length} onclick={() => ask('clear')}>清空记录…</button></div>
-    <p class="hint">异步投递中每 2 秒刷新。平台受理不代表已读；失败可能自动重试。</p>
+    <div class="section-title records-heading"><h2>最近发送</h2><label class="check"><input type="checkbox" bind:checked={failedOnly}>仅看失败／未知</label><button type="button" disabled={locked || !snapshot?.records.length} onclick={() => ask('clear')}>清空记录…</button></div>
+    <p class="hint">异步投递中每 2 秒刷新。平台受理不代表已读；企微、飞书失败可能自动重试，微信状态未知不会自动重发。</p>
     {#if !records.length}<div class="empty">{failedOnly ? '没有失败记录' : '还没有发送记录'}<p>{!native ? '请在桌面应用中使用真实通知。' : '配置并启用渠道后，可发送测试查看最终结果。'}</p></div>
     {:else}<div class="records">{#each records as record (record.id)}
       {@const state = notificationRecordState(record.status)}
@@ -176,8 +179,8 @@
   .overview{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.overview>div{min-width:0}.overview strong{font-size:14px}.overview p,.hint{color:var(--muted);font-size:11px;line-height:1.65}.overview p{margin-top:4px}.master{display:flex;gap:5px;align-items:center;flex:none;white-space:nowrap}
   .notice,.confirmation{border:1px solid var(--divider);border-left:3px solid var(--warning);background:var(--warning-bg);padding:10px 11px;border-radius:4px;margin:10px 0;overflow-wrap:anywhere}.notice{color:var(--warning)}.feedback{padding:8px 0;color:var(--success);overflow-wrap:anywhere}
   .tabs{display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--divider);margin:13px 0}.tabs button{border-radius:4px 4px 0 0;border-bottom:2px solid transparent;padding:7px 9px}.tabs .active{color:var(--accent);border-bottom-color:var(--accent);background:var(--selected)}.tabs .refresh{margin-left:auto;padding-left:6px;padding-right:6px}
-  .section-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;flex-wrap:wrap}.section-title>span{font-size:11px;color:var(--muted)}.channels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.channel{min-width:0;border:1px solid var(--divider);border-radius:5px;padding:11px;background:var(--layer)}.channel-top{display:flex;align-items:center;gap:8px}.glyph{display:grid;place-items:center;width:27px;height:27px;background:var(--selected);border:1px solid var(--divider);border-radius:5px;color:var(--accent);font-weight:600;flex:none}.unavailable .glyph{color:var(--muted);background:var(--canvas)}.channel>.hint{margin-top:6px}.channel-state{font-size:11px;margin-top:9px;overflow-wrap:anywhere}.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}.actions>button{border-color:var(--stroke)}.actions>button.primary{border-color:var(--accent)}
+  .section-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;flex-wrap:wrap}.section-title>span{font-size:11px;color:var(--muted)}.channels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.channel{min-width:0;border:1px solid var(--divider);border-radius:5px;padding:11px;background:var(--layer)}.channel-top{display:flex;align-items:center;gap:8px}.glyph{display:grid;place-items:center;width:27px;height:27px;background:var(--selected);border:1px solid var(--divider);border-radius:5px;color:var(--accent);font-weight:600;flex:none}.channel>.hint{margin-top:6px}.channel-state{font-size:11px;margin-top:9px;overflow-wrap:anywhere}.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}.actions>button{border-color:var(--stroke)}.actions>button.primary{border-color:var(--accent)}
   .editor{padding:12px;border:1px solid var(--accent);border-radius:5px;background:var(--layer);margin-top:12px}.editor fieldset{border:0;padding:0;margin:10px 0 0;min-width:0}.field{display:grid;gap:5px;margin:11px 0}.field input{width:100%;min-width:0}.field small{color:var(--muted);line-height:1.6}.check{display:flex;align-items:flex-start;gap:7px}.check input{flex:none;margin:3px 0 0}.validation{font-size:11px;color:var(--warning);margin-top:6px;overflow-wrap:anywhere}.subscriptions{padding-top:16px;margin-top:14px;border-top:1px solid var(--divider)}.event{padding:6px 0}.event small{display:block;color:var(--muted)}.subscriptions>.hint{margin-top:6px}.preview{background:var(--canvas);border:1px solid var(--divider);border-radius:5px;padding:12px;margin-top:15px}.preview-select{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}.preview-select select{max-width:140px;padding:3px 5px}.message{padding:10px;background:var(--surface);border-left:2px solid var(--accent);border-radius:2px;margin-bottom:8px}.message p{margin-top:5px;font-size:11px}.policy{margin-top:14px;font-size:11px;color:var(--muted)}.policy summary{cursor:pointer;color:var(--text);padding:4px 0}.policy p{margin-top:6px}.policy summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .records-heading{justify-content:flex-start}.records-heading>h2{margin-right:auto}.empty{text-align:center;padding:28px 10px;background:var(--canvas);border:1px dashed var(--stroke);border-radius:5px;margin-top:12px}.empty p{color:var(--muted);font-size:11px;margin-top:5px}.records{display:grid;gap:8px;margin-top:10px}.record{padding:11px;border:1px solid var(--divider);border-radius:5px;background:var(--layer);min-width:0}.record-head{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.record-head strong{overflow-wrap:anywhere;min-width:0;flex:1 1 130px}.badge{font-size:10px;color:var(--muted);border:1px solid var(--divider);padding:1px 5px;border-radius:3px}.badge.success{color:var(--success)}.badge.warning{color:var(--warning);background:var(--warning-bg)}.record .hint{margin-top:4px}.record time{display:block}.confirmation p{margin-top:6px}.confirmation .actions{justify-content:flex-end}
-  @container(max-width:460px){.channels{grid-template-columns:1fr}.channel{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px}.channel-top,.channel-state,.channel>.hint{grid-column:1}.channel .actions{grid-column:2;grid-row:1 / 4;align-self:center;flex-direction:column;margin-top:0}.unavailable>.hint:last-child{grid-column:1 / -1}.overview{flex-wrap:wrap;gap:7px}.master{margin-left:auto}.editor{padding:10px}.section-title{gap:6px}.records-heading .check{font-size:11px}}
+  @container(max-width:460px){.channels{grid-template-columns:1fr}.channel{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px}.channel-top,.channel-state,.channel>.hint{grid-column:1}.channel .actions{grid-column:2;grid-row:1 / 4;align-self:center;flex-direction:column;margin-top:0}.overview{flex-wrap:wrap;gap:7px}.master{margin-left:auto}.editor{padding:10px}.section-title{gap:6px}.records-heading .check{font-size:11px}}
 </style>

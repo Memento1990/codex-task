@@ -108,11 +108,16 @@ impl ChangeDetector{
         }self.previous=Some(current);notices
     }
 }
-pub struct Engine{pub root:PathBuf,gui:PathBuf,collector_start_error:Option<String>,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,notifications:Option<crate::notifications::NotificationService>}
+pub struct Engine{pub root:PathBuf,gui:PathBuf,collector_start_error:Option<String>,store:Option<Store>,notices:ChangeDetector,connection:Option<Value>,checked_at:f64,restart_required:bool,notifications:Option<std::sync::Arc<crate::notifications::NotificationService>>}
 impl Engine{
     pub fn new(root:PathBuf,gui:PathBuf)->Self{Self{root,gui,collector_start_error:None,store:None,notices:ChangeDetector::default(),connection:None,checked_at:0.,restart_required:false,notifications:None}}
     pub fn set_collector_start_result(&mut self,result:Result<()>){self.collector_start_error=result.err();}
-    pub fn start_notifications(&mut self){if !self.restart_required && self.notifications.is_none(){self.notifications=Some(crate::notifications::NotificationService::new(self.root.clone()));}}
+    pub fn start_notifications(&mut self){if !self.restart_required && self.notifications.is_none(){self.notifications=Some(std::sync::Arc::new(crate::notifications::NotificationService::new(self.root.clone())));}}
+    /// Clone while locked; perform notification network/control work after releasing Engine.
+    pub fn notification_service(&mut self)->Result<std::sync::Arc<crate::notifications::NotificationService>>{
+        if self.restart_required || crate::migration::resolve_root(&self.root)?!=self.root{return Err("数据目录已切换，请先重启看板".into());}
+        self.start_notifications();self.notifications.clone().ok_or("通知服务不可用".into())
+    }
     pub fn data_location(&self)->Value{crate::migration::location(&self.root,self.restart_required)}
     pub fn migrate_data(&mut self,path:&Path)->Result<Value>{
         if self.restart_required{return Err("数据目录已切换，请先重启看板".into());}
@@ -170,8 +175,8 @@ impl Engine{
         "disconnect"=>{let plan=integration::preview(&self.root,true)?;let changed=integration::apply(&self.root,&plan)?;self.connection=None;Ok(json!({"success":true,"changed":changed}))},
         "window_load"=>{let mut state=read_json(&self.root.join("window.json")).ok().filter(|v|v.is_object()).unwrap_or(json!({}));if state.get("tab").is_some_and(|v|!v.as_u64().is_some_and(|n|n<=2)){state["tab"]=json!(0);}Ok(state)},
         "window_save"=>{let mut old=self.call_inner("window_load",json!({}))?;for key in ["x","y","width","height","pinned","selected","tab","filter","details_collapsed"]{if let Some(value)=params.get(key){let valid=match key{"pinned"|"details_collapsed"=>value.is_boolean(),"selected"|"filter"=>value.as_str().is_some_and(|s|s.len()<=500),"tab"=>value.as_u64().is_some_and(|n|n<=2),"width"=>value.as_f64().is_some_and(|n|(392.0..=100000.).contains(&n)),"height"=>value.as_f64().is_some_and(|n|(570.0..=100000.).contains(&n)),_=>value.as_f64().is_some_and(|n|n.is_finite()&&n.abs()<=100000.)};if !valid{return Err("窗口设置无效".into());}old[key]=value.clone();}}atomic_json(&self.root.join("window.json"),&old)?;Ok(json!(true))},
-        "notification_snapshot"|"notification_save"|"notification_channel_save"|"notification_channel_delete"|"notification_test"|"notification_retry"|"notification_clear"=>{
-            let service=self.notifications.get_or_insert_with(||crate::notifications::NotificationService::new(self.root.clone()));
+        "notification_snapshot"|"notification_save"|"notification_channel_save"|"notification_channel_delete"|"notification_test"|"notification_retry"|"notification_clear"|"notification_weixin_action"=>{
+            let service=self.notifications.get_or_insert_with(||std::sync::Arc::new(crate::notifications::NotificationService::new(self.root.clone())));
             service.call(method,params)
         },
         _=>Err("未知看板操作".into())

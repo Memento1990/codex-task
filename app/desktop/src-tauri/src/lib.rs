@@ -52,13 +52,25 @@ fn show_main(app:&tauri::AppHandle) { dock::restore(app); if let Some(w)=app.get
 
 #[tauri::command]
 async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, method:String, mut params:Value)->Result<Value,String> {
-    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data","notification_snapshot","notification_save","notification_channel_save","notification_channel_delete","notification_test","notification_retry","notification_clear"];
+    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data","notification_snapshot","notification_save","notification_channel_save","notification_channel_delete","notification_test","notification_retry","notification_clear","notification_weixin_action","database_repair"];
     let permitted=if window.label()=="main"{allowed.contains(&method.as_str())}else if let Some(kind)=UtilityKind::from_label(window.label()){kind.bridge(&method)}else{["completed","toast"].contains(&window.label())&&method=="snapshot"};
     if !permitted { return Err("此窗口不允许该操作".into()); }
     if window.label()!="main" { params["notify"]=json!(false); }
     let worker=state.engine.clone();
     let name=method.clone();
-    let result=tauri::async_runtime::spawn_blocking(move||worker.lock().map_err(|_|"本地状态异常".to_string())?.call(&name,params)).await.map_err(|_|"本地操作已中断")??;
+    let result=tauri::async_runtime::spawn_blocking(move||{
+        if name.starts_with("notification_") {
+            let service={worker.lock().map_err(|_|"本地状态异常".to_string())?.notification_service()?};
+            return service.call(&name,params);
+        }
+        if name=="database_repair" {
+            let root={worker.lock().map_err(|_|"本地状态异常".to_string())?.root.clone()};
+            let action=params["action"].as_str().unwrap_or("snapshot").to_owned();
+            if let Some(obj)=params.as_object_mut(){obj.remove("action");obj.remove("notify");}
+            return floatboard_core::database_repair::call(&root,&action,&params);
+        }
+        worker.lock().map_err(|_|"本地状态异常".to_string())?.call(&name,params)
+    }).await.map_err(|_|"本地操作已中断")??;
     if method=="preferences" {
         let ui=app.clone();let skip=!result["show_taskbar"].as_bool().unwrap_or(false);
         dock::on_main(&app,move||{if let Some(w)=ui.get_webview_window("main"){ui.state::<State>().dock.lock().map_err(|_|"贴边状态异常")?.preferences(&w,skip)?;}Ok(())}).await?;

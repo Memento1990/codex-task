@@ -7,4 +7,5 @@
 - Repository root `启动任务侧窗.cmd` and the desktop “正式版” shortcut launch the installed root launcher, not a repository releases directory.
 - Development lifecycle: code -> isolated build/test -> user-authorized commit/push/GitHub Release -> installed app checks/downloads verified release -> explicit install confirmation. Do not silently publish a new version or replace a published tag/asset to deliver local changes.
 - Existing historical releases may be occupied by old Reporter processes; retain them until sessions end normally. Do not kill Codex/Reporter/GUI to clean directories.
+- A user request to “发版” / “发布版本” defaults to a GitHub Release for `Memento1990/codex-task`, not a local package or production installation. Use `app/desktop/publish-release.ps1` and follow `docs/releasing.md`; run preparation first, inspect the artifacts, then explicitly publish. Never bypass a failed verification or replace an existing published tag/asset.
 - Details: docs/development-isolation.md.

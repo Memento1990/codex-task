@@ -1,10 +1,133 @@
 use super::*;
+
+#[test]
+fn corrupt_or_missing_task_store_does_not_block_outbox_or_erase_baseline(){
+    for corrupt in [false,true] {
+        let f=Fixture::new();f.configure();
+        f.service.observe(&[task("running",1,json!([]))]).unwrap();
+        let baseline=transaction(&f.root,|s|Ok(serde_json::to_value(&s.baseline).unwrap())).unwrap();
+        if corrupt {fs::write(f.root.join("events.sqlite3"),b"corrupt SQLite fixture").unwrap();}
+        f.service.call("notification_test",json!({"id":"wecom"})).unwrap();
+        let mut sent=false;
+        assert!(worker_cycle(&f.service.inner,|_,_|{sent=true;Outcome::Accepted}).is_err());
+        assert!(sent,"task storage errors must not gate explicit test delivery");
+        assert_eq!(f.snapshot()["records"][0]["status"],"accepted");
+        transaction(&f.root,|s|{assert_eq!(serde_json::to_value(&s.baseline).unwrap(),baseline);assert!(!s.baseline_reset);Ok(())}).unwrap();
+        assert!(!f.service.inner.baseline_needed.load(Ordering::Acquire));
+        f.service.observe(&[task("completed",2,json!([]))]).unwrap();
+        assert_eq!(f.snapshot()["records"][0]["event"],"task_completed");
+    }
+}
+
+#[test]
+fn corrupt_task_store_still_syncs_and_dispatches_weixin(){
+    let f=Fixture::new();configure_weixin(&f,vec![Ok(json!({"ret":0}))]);
+    fs::write(f.root.join("events.sqlite3"),b"corrupt SQLite fixture").unwrap();
+    f.service.call("notification_test",json!({"id":"wechat"})).unwrap();
+    f.service.inner.weixin.lock().unwrap().as_ref().unwrap().halt().unwrap();
+    assert_eq!(weixin_snapshot(&f.service.inner)["active"],false);
+    assert!(worker_cycle(&f.service.inner,|_,_|panic!("wrong transport")).is_err());
+    assert_eq!(weixin_snapshot(&f.service.inner)["active"],true);
+    assert_eq!(f.snapshot()["records"][0]["status"],"accepted");
+}
+
+#[test]
+fn channel_activation_suppresses_pre_enable_changes_for_shared_baseline(){
+    let f=Fixture::new();f.configure();f.service.observe(&[task("running",1,json!([]))]).unwrap();
+    f.service.call("notification_channel_save",json!({"id":"wecom","enabled":false})).unwrap();
+    // Completion happens before enable but has not yet been polled.
+    let completed=task("completed",2,json!([]));
+    f.service.call("notification_channel_save",json!({"id":"wecom","enabled":true})).unwrap();
+    f.service.observe(&[completed]).unwrap();assert_eq!(f.snapshot()["records"],json!([]));
+    // Same persisted reset contract applies to Weixin activation.
+    f.service.inner.weixin.lock().unwrap().take();
+    *f.service.inner.weixin.lock().unwrap()=Some(Arc::new(crate::weixin::notification_fixture(f.root.join("weixin-production"),vec![])));
+    f.service.call("notification_channel_save",json!({"id":"wechat","enabled":true})).unwrap();
+    f.service.observe(&[task("blocked",3,json!([{"id":"old","open":true}]))]).unwrap();
+    assert_eq!(f.snapshot()["records"],json!([]));
+    f.service.observe(&[task("completed",4,json!([]))]).unwrap();
+    let records=f.snapshot()["records"].as_array().unwrap().clone();
+    assert_eq!(records.len(),2);assert!(records.iter().all(|r|r["event"]=="task_completed"));
+}
+
+#[test]
+fn shutdown_drains_observer_and_inflight_worker_cycle(){
+    let f=Fixture::new();f.configure();f.service.observe(&[task("running",1,json!([]))]).unwrap();
+    thread::scope(|scope|{
+        let disk=lock(&f.root).unwrap();
+        let observer=scope.spawn(||f.service.observe(&[task("completed",2,json!([]))]));
+        wait_until(||f.service.inner.lifecycle.try_write().is_err());
+        let shutdown=scope.spawn(||f.service.shutdown());
+        wait_until(||f.service.inner.stopped.load(Ordering::Acquire));
+        drop(disk);let _=observer.join().unwrap();shutdown.join().unwrap();
+    });
+    // A separate fixture models the worker's production lifecycle/activity guards.
+    let f=Fixture::new();f.configure();f.service.call("notification_test",json!({"id":"wecom"})).unwrap();
+    let (started,rx)=std::sync::mpsc::channel();let (release,wait)=std::sync::mpsc::channel();
+    thread::scope(|scope|{
+        let inner=&f.service.inner;
+        let worker=scope.spawn(move ||{
+            let _lifecycle=inner.lifecycle.read().unwrap();
+            let _activity=crate::runtime::ProcessLock::acquire(&inner.root.join("notification-activity.lock")).unwrap();
+            worker_cycle(inner,|_,_|{started.send(()).unwrap();wait.recv().unwrap();Outcome::Accepted})
+        });
+        rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Snapshot is allowed while dispatch owns a network request.
+        assert_eq!(f.snapshot()["records"][0]["status"],"pending");
+        let shutdown=scope.spawn(||f.service.shutdown());
+        wait_until(||f.service.inner.stopped.load(Ordering::Acquire));
+        assert!(f.service.inner.lifecycle.try_write().is_err());
+        release.send(()).unwrap();assert!(worker.join().unwrap().is_err());shutdown.join().unwrap();
+    });
+    transaction(&f.root,|s|{assert_eq!(s.records[0].status,"accepted");Ok(())}).unwrap();
+}
+
+fn wait_until(mut condition:impl FnMut()->bool){let deadline=std::time::Instant::now()+Duration::from_secs(2);while !condition(){assert!(std::time::Instant::now()<deadline,"coordination timed out");thread::yield_now();}}
+
+#[test]
+fn shutdown_drains_waiting_foreground_rechecks_stop_and_releases_account(){
+    let f=Fixture::new();f.snapshot();
+    let retained_inner=Arc::clone(&f.service.inner);
+    thread::scope(|scope|{
+        let dispatch=f.service.inner.dispatch.lock().unwrap();
+        let caller=scope.spawn(||f.service.call("notification_save",json!({"enabled":true})));
+        wait_until(||f.service.inner.lifecycle.try_write().is_err());
+        let shutdown=scope.spawn(||f.service.shutdown());
+        wait_until(||f.service.inner.stopped.load(Ordering::Acquire));
+        drop(dispatch);
+        assert!(caller.join().unwrap().is_err());shutdown.join().unwrap();
+    });
+    assert!(retained_inner.weixin.lock().unwrap().is_none());
+    let new_account=crate::weixin::Weixin::new(f.root.join("weixin-production")).unwrap();new_account.shutdown();drop(new_account);
+    assert!(weixin(&retained_inner).is_err());
+    assert!(f.service.call("notification_snapshot",json!({})).is_err());
+    assert!(f.service.observe(&[]).is_err());
+    transaction(&f.root,|s|{assert!(!s.enabled);Ok(())}).unwrap();
+}
+
+#[test]
+fn shutdown_drains_snapshot_transaction_without_waiting_for_dispatch(){
+    let f=Fixture::new();f.snapshot();
+    thread::scope(|scope|{
+        let disk=lock(&f.root).unwrap();
+        let caller=scope.spawn(||f.service.call("notification_snapshot",json!({})));
+        wait_until(||f.service.inner.lifecycle.try_write().is_err());
+        let (done,rx)=std::sync::mpsc::channel();
+        let service=&f.service;
+        let shutdown=scope.spawn(move ||{service.shutdown();done.send(()).unwrap();});
+        wait_until(||f.service.inner.stopped.load(Ordering::Acquire));
+        assert!(rx.try_recv().is_err());
+        drop(disk);caller.join().unwrap().unwrap();shutdown.join().unwrap();rx.recv().unwrap();
+    });
+    assert!(f.service.inner.weixin.lock().unwrap().is_none());
+}
+
 struct Fixture { root:PathBuf, service:NotificationService }
 impl Fixture {
     fn new()->Self {
         let root=std::env::temp_dir().join(format!("floatboard-notifications-{}",uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let service=NotificationService{inner:Arc::new(Inner{root:root.clone(),stopped:AtomicBool::new(false),baseline_needed:AtomicBool::new(true),error:Mutex::new(None)}),worker:Mutex::new(None)};
+        let service=NotificationService{inner:Arc::new(Inner{root:root.clone(),lifecycle:RwLock::new(()),stopped:AtomicBool::new(false),baseline_needed:AtomicBool::new(true),error:Mutex::new(None),weixin:Mutex::new(None),dispatch:Mutex::new(())}),worker:Mutex::new(None)};
         Self{root,service}
     }
     fn configure(&self){
@@ -112,7 +235,7 @@ fn persisted_reset_reopen_and_crash_lease_resume(){
     assert_eq!(f.snapshot()["records"].as_array().unwrap().len(),1);
     // A different instance consumes the persisted enable reset, even if its own
     // in-memory first-observation flag was already consumed before the toggle.
-    let other=Inner{root:f.root.clone(),stopped:AtomicBool::new(false),baseline_needed:AtomicBool::new(false),error:Mutex::new(None)};
+    let other=Inner{root:f.root.clone(),lifecycle:RwLock::new(()),stopped:AtomicBool::new(false),baseline_needed:AtomicBool::new(false),error:Mutex::new(None),weixin:Mutex::new(None),dispatch:Mutex::new(())};
     f.service.call("notification_save",json!({"enabled":false})).unwrap();
     f.service.call("notification_save",json!({"enabled":true})).unwrap();
     observe(&other,&[task("completed",4,json!([]))]).unwrap();assert_eq!(f.snapshot()["records"].as_array().unwrap().len(),1);
@@ -122,8 +245,11 @@ fn persisted_reset_reopen_and_crash_lease_resume(){
     transaction(&f.root,|s|{s.records.last_mut().unwrap().lease_until=now()-1.;Ok(())}).unwrap();
     deliver_one(&other,|_,r|{assert_eq!(r.attempts,2);Outcome::Accepted}).unwrap();assert_eq!(f.snapshot()["records"][0]["status"],"accepted");
 }
+fn configure_weixin(f:&Fixture,replies:Vec<Result<Value>>){let w=crate::weixin::notification_fixture(f.root.join("weixin-production"),replies);*f.service.inner.weixin.lock().unwrap()=Some(Arc::new(w));f.service.call("notification_channel_save",json!({"id":"wechat","enabled":true})).unwrap();f.service.call("notification_save",json!({"enabled":true})).unwrap();}
+#[test]fn weixin_task_outbox_acceptance_and_ambiguous_no_retry(){let f=Fixture::new();configure_weixin(&f,vec![Ok(json!({"ret":0})),Err("timeout after dispatch".into())]);f.service.observe(&[task("running",1,json!([]))]).unwrap();f.service.observe(&[task("completed",2,json!([]))]).unwrap();deliver_one(&f.service.inner,|_,_|panic!("wrong transport")).unwrap();assert_eq!(f.snapshot()["records"][0]["status"],"accepted");f.service.call("notification_test",json!({"id":"wechat"})).unwrap();deliver_one(&f.service.inner,|_,_|panic!("wrong transport")).unwrap();let s=f.snapshot();assert_eq!(s["records"][0]["status"],"unknown");assert!(f.service.call("notification_retry",json!({"id":s["records"][0]["id"]})).is_err());deliver_one(&f.service.inner,|_,_|panic!("unknown must not retry")).unwrap();}
+#[test]fn weixin_crash_lease_disconnect_and_disable_invalidate(){let f=Fixture::new();configure_weixin(&f,vec![]);f.service.call("notification_test",json!({"id":"wechat"})).unwrap();transaction(&f.root,|s|{s.records[0].attempts=1;s.records[0].lease_until=now()-1.;Ok(())}).unwrap();deliver_one(&f.service.inner,|_,_|panic!("ambiguous crash must not resend")).unwrap();assert_eq!(f.snapshot()["records"][0]["status"],"unknown");f.service.call("notification_test",json!({"id":"wechat"})).unwrap();f.service.call("notification_weixin_action",json!({"action":"disconnect"})).unwrap();let s=f.snapshot();assert_eq!(s["weixin"]["bound"],false);assert_eq!(s["channels"][0]["enabled"],false);assert_eq!(s["records"][0]["status"],"skipped");deliver_one(&f.service.inner,|_,_|panic!("disconnected queue must not send")).unwrap();}
 #[test]
-fn defaults_wechat_rejection_retention_and_clear(){
+fn defaults_unbound_wechat_rejection_retention_and_clear(){
     let f=Fixture::new();assert_eq!(f.snapshot()["enabled"],false);assert_eq!(f.snapshot()["subscriptions"]["blocker_opened"],true);
     for method in ["notification_channel_save","notification_test"]{assert!(f.service.call(method,json!({"id":"wechat","enabled":true})).is_err());}
     transaction(&f.root,|s|{for _ in 0..510{enqueue(s,"wecom","test","fixture",None);}prune(s,now());assert_eq!(s.records.len(),500);s.records[0].created_at=now()-RETENTION-1.;prune(s,now());assert_eq!(s.records.len(),499);s.records[0].status="accepted".into();Ok(())}).unwrap();
