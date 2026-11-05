@@ -232,7 +232,7 @@ fn salvage(db: &Connection, destination: &Path, deadline:std::time::Instant) -> 
             }
         }
     }
-    let mut report=json!({"indexed_fallback":indexed_fallback,"fallback_schema_verified":schema_verified,"index_scan_complete":index_scan_complete,"indexed_lookups_complete":lookup_complete,"unreadable_rows":work.unreadable,"duplicate_rows":work.duplicates,"rejected_rows":work.rejected,"full_scan_rows":work.full_rows,"indexed_rows":work.index_rows,"indexed_lookups":work.lookups,"row_work":work.full_rows+work.index_rows+work.lookups,"accepted_payload_bytes":work.accepted_bytes,"cumulative_read_bytes":work.read_bytes,"budget_exhausted":work.budget_exhausted,"sql_deadline_exceeded":std::time::Instant::now()>=deadline,"counts_are_best_effort":true,"row_counters_are_attempts":true,"full_scan_row_limit":MAX_ROWS,"indexed_row_limit":MAX_ROWS,"total_row_work_limit":MAX_WORK,"accepted_payload_byte_limit":MAX_ACCEPTED_BYTES,"cumulative_read_byte_limit":MAX_READ_BYTES,"sql_deadline_seconds":SQL_SECONDS,"source_task_count":known,"omitted_tasks":known.map(|n|(n-tasks.len() as i64).max(0)),"scan_complete":scan_complete,"events_recovered":0,"omitted_events":omitted_events,"omitted_source_archive_rows":omitted_archives,"historical_completion_episodes_recovered":0,"timing_recovered":false,"recovered_tasks":tasks.len(),"destination_integrity_ok":false});
+    let mut report=json!({"indexed_fallback":indexed_fallback,"fallback_schema_verified":schema_verified,"index_scan_complete":index_scan_complete,"indexed_lookups_complete":lookup_complete,"unreadable_rows":work.unreadable,"duplicate_rows":work.duplicates,"rejected_rows":work.rejected,"full_scan_rows":work.full_rows,"indexed_rows":work.index_rows,"indexed_lookups":work.lookups,"row_work":work.full_rows+work.index_rows+work.lookups,"accepted_payload_bytes":work.accepted_bytes,"cumulative_read_bytes":work.read_bytes,"budget_exhausted":work.budget_exhausted,"sql_deadline_exceeded":std::time::Instant::now()>=deadline,"counts_are_best_effort":true,"row_counters_are_attempts":true,"full_scan_row_limit":MAX_ROWS,"indexed_row_limit":MAX_ROWS,"total_row_work_limit":MAX_WORK,"accepted_payload_byte_limit":MAX_ACCEPTED_BYTES,"cumulative_read_byte_limit":MAX_READ_BYTES,"sql_deadline_seconds":SQL_SECONDS,"source_task_count":known,"omitted_tasks":known.map(|n|(n-tasks.len() as i64).max(0)),"scan_complete":scan_complete,"events_recovered":0,"omitted_events":omitted_events,"omitted_source_archive_rows":omitted_archives,"historical_completion_episodes_recovered":0,"timing_recovered":false,"recovered_task_rows":tasks.len(),"recovered_tasks":0,"destination_integrity_ok":false});
     if tasks.is_empty(){report["status"]=json!("no_readable_tasks");return Ok(report);}
     fs::create_dir(destination).map_err(|_| "恢复目录创建失败")?;
     let target = Store::open(destination,false)?;
@@ -245,7 +245,11 @@ fn salvage(db: &Connection, destination: &Path, deadline:std::time::Instant) -> 
     // using deterministic archive:<sha256(task id)>:<revision>, with no events.
     let mut target = Store::open(destination,false)?;
     let completed: i64=target.db.query_row("select count(*) from completed_tasks",[],|r|r.get(0)).map_err(|_| "恢复完成记录检查失败")?;
-    if !integrity(&target.db) || target.tasks().is_err() { return Err("恢复副本未通过完整性或应用读取检查".into()); }
+    if !integrity(&target.db) { return Err("恢复副本未通过完整性或应用读取检查".into()); }
+    // Count through the real application projection: unreported placeholders
+    // remain preserved in tasks, but must not inflate prepare/apply/health counts.
+    let visible=target.tasks().map_err(|_| "恢复副本未通过完整性或应用读取检查")?.len();
+    report["recovered_tasks"]=json!(visible);
     target.db.execute_batch("pragma wal_checkpoint(TRUNCATE);").map_err(|_| "恢复副本收尾失败")?;
     report["status"]=json!("partial_recovery");report["destination_integrity_ok"]=json!(true);report["reconstructed_current_completions"]=json!(completed);Ok(report)
 }

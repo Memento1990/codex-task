@@ -47,22 +47,32 @@ impl Parent{
         if unsafe{WaitForSingleObject(self.0,45000)}!=WAIT_OBJECT_0{return Err("看板尚未正常退出，未切换数据".into());}Ok(())
     }
 }
+// These reasons are rendered as escaped text by the settings UI, never HTML.
+// Bound persisted lower-layer errors without slicing a UTF-8 code point.
+fn failure_reason(error:&str)->String{
+    error.chars().filter(|c|!c.is_control()).take(240).collect()
+}
+fn failure_message(stage:&str,error:&str)->String{
+    let reason=failure_reason(error);
+    let guidance=if error.contains("采集器不支持安全修复") || error.contains("旧采集器未确认安全交接") {
+        "旧版采集器无法确认安全暂停。请先保存工作；若问题持续，请重启 Windows 后再打开看板重试。不要强行结束 Codex 或上报进程。"
+    }else{""};
+    format!("修复{stage}未完成，尚未切换数据。原因：{reason}。{guidance}原数据库和日志已保留。")
+}
 /// Caller has already gated Engine and drained foreground notifications/SQLite.
 pub fn prepare(root:&Path)->Result<Value>{
     let outcome=prepare_inner(root);
     if let Err(error)=&outcome {
         // Preparation may fail before a helper/request exists. Persist that
         // stage instead of reverting the settings page to "not started".
-        let message=if error=="未找到通过验证的可恢复任务；原数据保持不变" {
-            "未能恢复通过校验的任务，尚未切换或重启。原数据库和日志已保留。"
-        }else{"修复准备未完成，尚未切换数据。原数据库和日志已保留。"};
+        let message=failure_message("准备",error);
         // Never erase a prior helper/committed operation or claim that an
         // already redirected source was not switched. This record is only for
         // errors before an operation has established its lifecycle identity.
         let prior=base(root).ok().and_then(|p|{let p=p.join("latest.json");if p.exists(){limited(&p).ok()}else{Some(json!({"status":"not_started"}))}});
         let can_record=prior.as_ref().is_some_and(|v|matches!(v["status"].as_str(),Some("not_started"|"failed"|"blocked")))
             && crate::migration::resolve_root(root).is_ok_and(|current|current==root);
-        if can_record {let _=result(root,json!({"status":"failed","stage":"prepare","message":message,"at":crate::now()}));}
+        if can_record {let _=result(root,json!({"status":"failed","stage":"prepare","reason":failure_reason(error),"message":message,"at":crate::now()}));}
     }
     outcome
 }
@@ -90,13 +100,13 @@ fn prepare_inner(root:&Path)->Result<Value>{
 
 pub fn execute(request:&Path)->Result<()>{
     let outcome=execute_inner(request);
-    if outcome.is_err(){
+    if let Err(error)=&outcome{
         if let Ok(req)=limited(request){
             if let (Some(root),Some(nonce))=(req["root"].as_str(),req["nonce"].as_str()){
                 if uuid::Uuid::parse_str(nonce).is_ok() && base(Path::new(root)).is_ok_and(|p|request==p.join(format!("request-{nonce}.json"))){
                     let _=atomic_json(&request.with_extension("error"),&json!({"nonce":nonce}));
                     // Do not overwrite a committed result when restart alone failed.
-                    if status(Path::new(root)).is_ok_and(|v|v["status"]=="preparing"&&v["nonce"]==nonce){let _=result(Path::new(root),json!({"status":"failed","nonce":nonce,"message":"未能安全完成修复，原数据已保留。"}));}
+                    if status(Path::new(root)).is_ok_and(|v|v["status"]=="preparing"&&v["nonce"]==nonce){let _=result(Path::new(root),json!({"status":"failed","stage":"executor","reason":failure_reason(error),"nonce":nonce,"message":failure_message("执行",error)}));}
                 }
             }
         }
@@ -124,7 +134,9 @@ fn execute_inner(request:&Path)->Result<()>{
     let destination=crate::migration::resolve_root(&root).unwrap_or_else(|_|root.clone());
     let committed=destination!=root || transaction["phase"]=="committed";
     let tasks=applied.as_ref().ok().map(|v|v["recovered_tasks"].clone()).unwrap_or_else(||transaction["recovered_tasks"].clone());
-    let _=result(&root,json!({"status":if committed{"awaiting_health"}else{"blocked"},"nonce":nonce,"health_deadline":crate::now()+60.,"source":root,"destination":destination,"recovered_tasks":tasks,"message":if committed{"数据已切换，正在确认看板和后续上报是否正常。"}else{"暂未完成修复。原数据已保留；可能仍有旧版上报连接占用，请在会话正常结束后重试。"}}));
+    let error=applied.as_ref().err().map(String::as_str).unwrap_or("修复事务尚未提交");
+    let message=if committed{"数据已切换，正在确认看板和后续上报是否正常。".to_owned()}else{failure_message("应用",error)};
+    let _=result(&root,json!({"status":if committed{"awaiting_health"}else{"blocked"},"stage":if committed{"health"}else{"apply"},"reason":if committed{Value::Null}else{json!(failure_reason(error))},"nonce":nonce,"health_deadline":crate::now()+60.,"source":root,"destination":destination,"recovered_tasks":tasks,"message":message}));
     let mut command=Command::new(exe);command.arg("--data-dir").arg(&root);
     if req["isolated"]==true{command.arg("--isolated-instance");}
     if committed{command.arg("--repair-health").arg(nonce);}
@@ -146,6 +158,29 @@ fn mark_health_failed(root:&Path,nonce:&str)->Result<()>{
     let mut record=status(root)?;
     if record["nonce"]==nonce && record["status"]=="awaiting_health"{record["status"]=json!("health_failed");result(root,record)?;}
     Ok(())
+}
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    #[test]
+    fn reasons_are_bounded_unicode_text_not_html(){
+        let input=format!("<tag>\n{}","错".repeat(300));
+        let reason=failure_reason(&input);
+        assert_eq!(reason.chars().count(),240);
+        assert!(!reason.contains('\n'));
+        assert!(reason.starts_with("<tag>")); // UI escapes text; never interpret it as markup.
+        assert!(failure_message("准备",&input).contains(&reason));
+    }
+    #[test]
+    fn legacy_pause_failure_has_actionable_non_destructive_guidance(){
+        let error="采集器不支持安全修复或未就绪；请等待旧会话正常结束后重试";
+        let message=failure_message("应用",error);
+        assert!(message.contains(error));
+        assert!(message.contains("请先保存工作"));
+        assert!(message.contains("重启 Windows"));
+        assert!(message.contains("不要强行结束"));
+        assert!(message.contains("尚未切换数据"));
+    }
 }
 /// Renderer can acknowledge only after an actual readable snapshot and fresh collector heartbeat.
 pub fn acknowledge(root:&Path,snapshot:&Value)->Result<()>{

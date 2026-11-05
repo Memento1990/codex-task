@@ -5,7 +5,8 @@ use std::fs;
 fn preparation_failure_is_persisted_without_switch_or_helper(){
  let base=std::env::temp_dir().join(format!("floatboard-repair-prepare-failure-{}",uuid::Uuid::new_v4()));let root=base.join("data");fs::create_dir_all(&root).unwrap();
  fs::write(root.join("events.sqlite3"),b"not a database").unwrap();
- assert!(repair_restart::prepare(&root).is_err());let status=repair_restart::status(&root).unwrap();
+ let error=repair_restart::prepare(&root).unwrap_err();let status=repair_restart::status(&root).unwrap();
+ assert_eq!(status["reason"],error);assert!(status["message"].as_str().unwrap().contains(&error));
  assert_eq!(status["status"],"failed");assert_eq!(status["stage"],"prepare");assert!(status["message"].as_str().unwrap().contains("尚未切换"));
  assert!(!root.join(migration::REDIRECT).exists());assert_eq!(fs::read(root.join("events.sqlite3")).unwrap(),b"not a database");
  assert!(!fs::read_dir(base.join("control/database-restart")).unwrap().any(|e|e.unwrap().file_name().to_string_lossy().starts_with("request-")));fs::remove_dir_all(base).unwrap();
@@ -14,7 +15,7 @@ fn preparation_failure_is_persisted_without_switch_or_helper(){
 fn failed_prepare_preserves_prior_operation_identity(){
  for state in ["preparing","ready","committed","awaiting_health","health_failed","completed"]{
   let base=std::env::temp_dir().join(format!("floatboard-prepare-preserve-{}",uuid::Uuid::new_v4()));let root=base.join("data");fs::create_dir_all(&root).unwrap();fs::write(root.join("events.sqlite3"),b"not a database").unwrap();
-  let latest=base.join("control/database-restart/latest.json");let record=json!({"status":state,"nonce":"prior-operation","recovered_tasks":18,"source":root,"destination":base.join("data-repaired-prior")});store::atomic_json(&latest,&record).unwrap();
+  let latest=base.join("control/database-restart/latest.json");let record=json!({"status":state,"nonce":"prior-operation","stage":"apply","reason":"prior failure reason","recovered_tasks":18,"source":root,"destination":base.join("data-repaired-prior")});store::atomic_json(&latest,&record).unwrap();
   if state=="health_failed"{let dest=base.join("data-repaired-prior");fs::create_dir_all(&dest).unwrap();store::atomic_json(&root.join(migration::REDIRECT),&json!({"version":1,"path":dest})).unwrap();}
   let before=fs::read(&latest).unwrap();assert!(repair_restart::prepare(&root).is_err());assert_eq!(fs::read(&latest).unwrap(),before,"prior {state} must survive failed preparation");fs::remove_dir_all(base).unwrap();
  }
