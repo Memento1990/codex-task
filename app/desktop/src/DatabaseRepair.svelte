@@ -61,8 +61,7 @@
 </script>
 
 <section class="repair" aria-labelledby="repair-heading" aria-busy={busy}>
-  <strong id="repair-heading">修复任务记录</strong>
-  <p>任务记录无法正常显示时，可尝试安全修复并重启看板。原始记录会保留，Codex 和正在进行的会话不会被强行结束。</p>
+  <strong id="repair-heading">任务记录</strong>
   <div class="repair-status" role="status" aria-live="polite">
     <strong>{!native?'请从桌面程序打开此功能':!loaded?'正在读取修复状态…':known?labels[snapshot!.status]:'修复状态暂时无法确认'}</strong>
     {#if snapshot?.status==='completed'}
@@ -84,7 +83,7 @@
   {#if confirm}
     <div use:focusConfirmation class="confirmation" role="group" aria-label="修复并重启确认">
       <strong>修复并重启看板？</strong>
-      <p>会保留原始记录，尽可能找回可读取的任务，并在准备就绪后自动重启看板。部分历史记录可能无法找回；未保存的看板设置不会自动保存。不会强行结束 Codex 或正在进行的会话。</p>
+      <p>会保留原始记录，尽可能找回可读取的任务，并在准备就绪后自动重启看板。部分历史记录可能无法找回。不会强行结束 Codex 或正在进行的会话。</p>
       <div class="buttons">
         <button type="button" onkeydown={escapeConfirmation} onclick={()=>confirm=false}>取消</button>
         <button type="button" class="primary" disabled={blocked||busy||!known||!!error} onkeydown={escapeConfirmation} onclick={repairRestart}>确认修复并重启</button>
@@ -96,7 +95,8 @@
 </section>
 
 <style>
-  .repair{display:grid;gap:8px;border-top:1px solid var(--divider);padding-top:14px;font-size:12px;line-height:1.65}
+  .repair{display:grid;gap:12px;font-size:11px;line-height:1.65}
+  .repair>strong{font-size:10px;font-weight:500;color:var(--muted);letter-spacing:.06em}
   .repair p{margin:0;color:var(--muted);overflow-wrap:anywhere}
   .repair-status{display:grid;gap:4px}
   .buttons{display:flex;gap:8px;flex-wrap:wrap}

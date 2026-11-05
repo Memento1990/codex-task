@@ -1,0 +1,45 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "index": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-11-05T08:49:38.266Z",
+          "status": "needs-review"
+        }
+      ]
+    },
+    "a-inspection-matrix": {
+      "versions": [
+        {
+          "path": "a-inspection-matrix.html",
+          "createdAt": "2026-11-05T08:49:38.380Z",
+          "status": "needs-review"
+        }
+      ]
+    },
+    "b-focus-timeline": {
+      "versions": [
+        {
+          "path": "b-focus-timeline.html",
+          "createdAt": "2026-11-05T08:49:38.506Z",
+          "status": "needs-review"
+        }
+      ]
+    },
+    "c-swimlane-deck": {
+      "versions": [
+        {
+          "path": "c-swimlane-deck.html",
+          "createdAt": "2026-11-05T08:49:38.627Z",
+          "status": "needs-review"
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-11-05T08:49:38.269Z",
+  "updatedAt": "2026-11-05T08:49:38.630Z"
+}

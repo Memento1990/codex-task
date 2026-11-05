@@ -41,7 +41,7 @@
   <div class="updates-heading"><strong>版本更新</strong><span>当前版本 {snapshot.current_version || appVersion}</span></div>
   <div class="update-status" role="status"><strong>{!loaded&&!requestError?'正在读取更新状态…':presentation.title}</strong>{#if snapshot.latest_version}<span class="update-version">{snapshot.latest_version}</span>{/if}<p>{presentation.description}</p></div>
   {#if snapshot.state==='downloading'}<div class="update-download"><progress max="100" value={percent===null?undefined:percent} aria-label="更新下载进度"></progress><span>{updateBytes(snapshot.downloaded_bytes)}{snapshot.total_bytes?` / ${updateBytes(snapshot.total_bytes)}`:''}{percent!==null?` · ${percent}%`:''}</span></div>{/if}
-  {#if snapshot.release_notes}<details class="update-notes" open={!compact}><summary>更新内容</summary><div>{snapshot.release_notes}</div></details>{/if}
+  {#if snapshot.release_notes}<details class="update-notes"><summary>发布说明</summary><div>{snapshot.release_notes}</div></details>{/if}
   {#if snapshot.installation_result?.status==='rolled_back'}<p class="update-error" role="status">上次更新未完成启动确认，已恢复旧版本入口。任务数据未回退，可以重新检查并重试。</p>{:else if snapshot.installation_result?.status==='awaiting_health'}<p class="update-error" role="alert">新版仍运行但未完成启动确认。请正常退出看板后重新启动，以恢复旧版本；不会强制结束进程。</p>{:else if snapshot.installation_result?.status==='completed'}<p class="update-meta" role="status">已完成更新至 {snapshot.installation_result.version}</p>{/if}
   {#if snapshot.error}<p class="update-error" role="status">{snapshot.error}</p>{/if}
   {#if requestError}<p class="update-error" role="alert">{requestError}</p>{/if}

@@ -1,0 +1,40 @@
+{
+  "variant": "b",
+  "results": [
+    {
+      "name": "baseline renders four active tasks",
+      "pass": true
+    },
+    {
+      "name": "task search filters visible model",
+      "pass": true
+    },
+    {
+      "name": "empty search has explicit empty state",
+      "pass": true
+    },
+    {
+      "name": "completed filter returns completed tasks",
+      "pass": true
+    },
+    {
+      "name": "task detail shows checklist and owns focus",
+      "pass": true
+    },
+    {
+      "name": "blocker resolution requires verification result",
+      "pass": true
+    },
+    {
+      "name": "resolution updates blocker and creates evidence",
+      "pass": true
+    },
+    {
+      "name": "execution",
+      "pass": false,
+      "error": "Selector button[data-mock=\"evidence\"][data-evidence=\"pay-e0\"] matched 2 elements (2 visible, 0 hidden). Candidates: 1. button \"打开 ↗\" (visible); 2. button \"打开证据预览\" (visible). Use a current snapshot ref or a more specific role, text, or CSS selector."
+    }
+  ],
+  "passed": 7,
+  "total": 8
+}

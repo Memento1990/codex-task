@@ -1,0 +1,25 @@
+TAP version 13
+# PASS Open blockers prevent advancing a task
+# PASS Waiting resumes only after confirmation
+# PASS Resolving blockers closes paused step segments and preserves recorded duration
+# PASS Reopening completed task excludes time after its completion
+# PASS Task completes only after all steps and evidence; completion survives refresh
+# PASS Reset cancels an in-flight repair instead of mutating the new scenario
+# PASS Reset cancels an in-flight installation
+# PASS Empty data keeps controls usable
+# PASS Cancelled task is excluded from intervention queue
+# 9/9 passed
+# Subtest: designs\\redesign-v2\\tests\\mock-state.test.cjs
+ok 1 - designs\\redesign-v2\\tests\\mock-state.test.cjs
+  ---
+  duration_ms: 122.0385
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 129.2139

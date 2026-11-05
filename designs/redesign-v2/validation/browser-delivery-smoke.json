@@ -1,0 +1,66 @@
+{
+  "results": [
+    {
+      "name": "a disabled notification preview explains prerequisite",
+      "pass": true
+    },
+    {
+      "name": "a enabled preview produces notification with task action",
+      "pass": true
+    },
+    {
+      "name": "a empty data notification has no invalid task action",
+      "pass": true
+    },
+    {
+      "name": "b disabled notification preview explains prerequisite",
+      "pass": true
+    },
+    {
+      "name": "b enabled preview produces notification with task action",
+      "pass": true
+    },
+    {
+      "name": "b empty data notification has no invalid task action",
+      "pass": true
+    },
+    {
+      "name": "c disabled notification preview explains prerequisite",
+      "pass": true
+    },
+    {
+      "name": "c enabled preview produces notification with task action",
+      "pass": true
+    },
+    {
+      "name": "c empty data notification has no invalid task action",
+      "pass": true
+    },
+    {
+      "name": "index link 在跑 3   受阻 3   待确认 1   完成 2▦\n          \n          \n            任务进度当前步骤卡点耗时\n          \n          \n            \n              支付重构·webhook 签名迁移\n              ▓▓▓░░░迁移签名校验\n              !242m\n            \n            \n              日志清洗管道·字段归一\n              ▓▓▓░░░trace_id 回填\n              —26m\n            \n            \n              数据迁移·SQLite 新目录\n              ▓▓░░░░比对表结构\n              !115m\n            \n          \n        \n      \n      \n        方案 A\n        巡检矩阵\n        一张表看完全部任务，行内展开下钻。先给结论：多少在跑、多少受阻、多少等你。\n          扫读成本最低，适合任务多、需要定期巡检的场景。\n        表格 · 全局总览 → 单行下钻\n        打开原型 →",
+      "pass": true
+    },
+    {
+      "name": "index link 支付重构3/7\n            日志清洗3/9\n            数据迁移2/4\n          \n          \n            \n              支付重构 · webhook 签名迁移\n              \n                ● 梳理旧签名调用点\n                ● 新增 v2 签名工具\n                ◉ 迁移 webhook 签名校验\n                \n                  ! 测试环境凭据失效\n                ○ 灰度 10% 流量比对\n              \n            \n            \n              需要介入 3\n              凭据失效你·22m\n              名单未确认林·1h\n              迁移窗口你·10m\n            \n          \n        \n      \n      \n        方案 B\n        单任务聚焦时间线\n        一次只读一个任务的生命周期：步骤、卡点、证据按模拟计时混排成一条叙事线，\n          其余任务收进顶部胶片条。把\"到底进行到哪了\"讲清楚。\n        叙事 · 一次一个任务，纵向生命周期\n        打开原型 →",
+      "pass": true
+    },
+    {
+      "name": "index link › 搜索任务，或输入命令…\n            ⌘K\n          \n          \n            任务/时间\n            \n              -2h\n              -1h\n              现在\n          \n          \n            ● 支付重构3/7\n            \n              \n              \n              \n              !\n              \n          \n          \n            ● 日志清洗3/9\n            \n              \n              \n              \n          \n          \n            ● 数据迁移2/4\n            \n              \n              \n              !\n          \n          \n            介入轨道 3\n            测试环境凭据失效\n          \n        \n      \n      \n        方案 C\n        并发泳道指挥台\n        横向时间轴把多个任务的执行段并排画出，一眼看出谁在跑、谁卡了多久、什么时候交叉。\n          常驻命令条让接入/通知/设置/完成记录全部一级可达。\n        空间 · 并发对齐，时间轴为轴\n        打开原型 →",
+      "pass": true
+    },
+    {
+      "name": "index link 数据落地契约 ↗",
+      "pass": true
+    },
+    {
+      "name": "index link 验证记录 ↗",
+      "pass": true
+    },
+    {
+      "name": "index copy states Mock and adaptation boundaries",
+      "pass": true
+    }
+  ],
+  "passed": 15,
+  "total": 15
+}

@@ -1,0 +1,9 @@
+2026-11-05 / 通知补测首次临时脚本
+通知补测后已到达 index.html；Node HTTP 链接检查阶段异常退出，未生成完整 JSON，不计为通过。
+
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  assert(!this.paused)
+  at Parser.finish (node:internal/deps/undici/undici:7433:9)
+  at Socket.onHttpSocketEnd (node:internal/deps/undici/undici:7872:34)
+
+后续使用页面 fetch 进行本地链接检查，见 browser-delivery-smoke.mjs 与 browser-delivery-smoke.json。

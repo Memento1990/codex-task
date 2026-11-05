@@ -6,6 +6,7 @@
 <title>方案 C · 并发泳道指挥台 — Codex Floatboard 重设计</title>
 <style>
 :root{
+  --panel:var(--raise);--panel2:var(--raise2);--panel3:var(--raise3);--line:var(--hair);--line2:var(--hair2);
   --bg:#06080a; --raise:#0b0e12; --raise2:#0f1318; --raise3:#141a21;
   --hair:#171d24; --hair2:#222b34; --hair3:#33414d;
   --fg:#c9d6e0; --fg2:#93a5b4; --dim:#61717f; --dim2:#42505c;
@@ -38,8 +39,6 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
   display:flex;flex-direction:column;box-shadow:0 28px 70px -16px #000f}
 .win.wide{width:980px;height:690px}
 .win.narrow{width:392px;height:646px}
-.win.utility{width:560px;height:646px}
-.win.history{width:820px;height:626px}
 
 /* ── 顶栏 ──────────────────────────────────────────────── */
 .bar{height:36px;flex:none;display:flex;align-items:center;gap:9px;padding:0 6px 0 13px;
@@ -87,7 +86,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
 .axis .tick.end::before{content:'';position:absolute;left:-1px;top:0;bottom:0;width:1px;
   background:linear-gradient(180deg,var(--mint),transparent)}
 
-/* 泳道均分剩余高度，避免任务少时下方留出大片空白。 */
+/* 时间轨道与标签共用同一行，任务增多时在列表内滚动。 */
 .lanes{flex:1;overflow-y:auto;min-height:0;position:relative;display:flex;flex-direction:column}
 .lane{display:grid;grid-template-columns:154px 1fr;border-bottom:1px solid var(--hair);
   min-height:62px;flex:1 1 62px;cursor:pointer;transition:background .1s}
@@ -120,8 +119,6 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
 .blk.blocked{background:repeating-linear-gradient(45deg,#7f2534,#7f2534 3px,#5a1a25 3px,#5a1a25 6px);
   border:1px solid var(--rose)}
 .blk.pending{background:#161d24;border:1px dashed #2b3742}
-.blk .bt{position:absolute;left:0;right:0;top:15px;font-size:8.5px;color:var(--dim);
-  white-space:nowrap;overflow:visible;padding-left:1px;pointer-events:none;max-width:0}
 .blk:hover{z-index:6}
 .blkmark{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:5;width:15px;height:15px;
   display:grid;place-items:center;font-size:9px;font-weight:700;border-radius:2px;pointer-events:none}
@@ -129,11 +126,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
 .blkmark.w{background:var(--amber);color:#140f02;box-shadow:0 0 0 2px var(--raise)}
 /* 起点早于窗口：左侧渐变提示“更早的活动被裁切”，不伪装成从窗口起点开始。 */
 .clip{position:absolute;left:0;top:50%;transform:translateY(-50%);width:16px;height:15px;z-index:5;
-  background:linear-gradient(90deg,#0b0e12 15%,transparent);pointer-events:none}
+  background:linear-gradient(90deg,var(--raise) 15%,transparent);pointer-events:none}
 .clip::after{content:'‹';position:absolute;left:1px;top:-2px;font-size:11px;color:var(--dim2)}
-.spark{position:absolute;right:4px;top:4px;bottom:4px;width:26px;z-index:3;pointer-events:none}
-.spark polyline{fill:none;stroke:var(--hair3);stroke-width:1}
-
 /* ── 介入轨道（横向卡片） ─────────────────────────────── */
 .rail{flex:none;border-top:1px solid var(--hair2);background:#07090b;display:flex;flex-direction:column}
 .rail-h{display:flex;align-items:center;gap:9px;padding:6px 13px;border-bottom:1px solid var(--hair);
@@ -158,26 +152,6 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
 .foot button{color:var(--dim);font-size:9px}
 .foot button:hover{color:var(--fg2);text-decoration:underline}
 
-/* ── 命令面板 ─────────────────────────────────────────── */
-.palette{position:absolute;inset:0;background:#04060899;backdrop-filter:blur(2px);z-index:50;
-  display:flex;justify-content:center;align-items:flex-start;padding-top:74px}
-.pbox{width:520px;background:#0b0e12;border:1px solid var(--hair3);border-radius:7px;overflow:hidden;
-  box-shadow:0 30px 70px #000e}
-.pinput{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--hair2)}
-.pinput .arrow{color:var(--mint);font-size:11px}
-.pinput input{flex:1;font:inherit;font-size:12px;background:none;border:0;color:var(--fg);outline:none}
-.pinput input::placeholder{color:var(--dim2)}
-.plist{padding:5px;max-height:330px;overflow-y:auto}
-.pgroup{font-size:8.5px;letter-spacing:.14em;color:var(--dim2);text-transform:uppercase;
-  padding:7px 9px 4px}
-.pitem{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:4px;cursor:pointer;color:var(--fg2)}
-.pitem:hover,.pitem.on{background:#17212b;color:var(--fg)}
-.pitem .ic2{width:17px;height:17px;border-radius:3px;background:var(--raise3);display:grid;
-  place-items:center;font-size:9px;color:var(--mint);flex:none}
-.pitem .lb{flex:1;font-size:11px}
-.pitem .lb small{color:var(--dim2);font-size:9px;margin-left:6px}
-.pitem .kk{font-size:8.5px;color:var(--dim2);border:1px solid var(--hair2);border-radius:2px;padding:0 4px}
-
 /* ── 窄窗 ──────────────────────────────────────────────── */
 .win.narrow .axis,.win.narrow .lanes{display:none}
 .win.narrow .cmdbar .ph{font-size:10px}
@@ -198,116 +172,73 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
 .ncard .step{font-size:9px;color:var(--dim2);margin-top:5px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
 
-/* ── 独立窗口 ──────────────────────────────────────────── */
-.ubar{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px 0 13px;
-  border-bottom:1px solid var(--hair);background:var(--raise2)}
-.ubar strong{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--fg2)}
-.ubar small{font-size:8.5px;color:var(--dim2);border:1px solid var(--hair2);padding:1px 5px;border-radius:2px}
-.ubody{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:15px}
-.ubody>*{flex:none}
-.sec{border:1px solid var(--hair);border-radius:4px;overflow:hidden;background:var(--raise)}
-.sec>h3{margin:0;padding:8px 12px;font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--dim2);border-bottom:1px solid var(--hair);background:var(--raise2);
-  display:flex;justify-content:space-between;align-items:center}
-.sec>h3 span{letter-spacing:0;text-transform:none;font-size:9px;color:var(--dim2)}
-.srow{display:flex;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid #12171c}
-.srow:last-child{border-bottom:0}
-.srow .label{flex:1;font-size:10.5px;color:var(--fg2)}
-.srow .label small{display:block;font-size:9px;color:var(--dim2);margin-top:2px;line-height:1.5}
-.srow code{font-size:9px;color:var(--dim);background:#06080a;border:1px solid var(--hair);
-  padding:2px 6px;border-radius:2px;max-width:246px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
-.sw{width:27px;height:15px;border-radius:8px;background:#232c35;position:relative;flex:none;cursor:pointer}
-.sw::after{content:'';position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;
-  background:#61717f;transition:transform .15s,background .15s}
-.sw.on{background:#16382f}
-.sw.on::after{transform:translateX(12px);background:var(--mint)}
-.btn{font-size:10px;padding:5px 10px;border:1px solid var(--hair2);border-radius:3px;background:var(--raise3);
-  color:var(--fg2)}
-.btn:hover{background:#1b242e;border-color:var(--hair3);color:var(--fg)}
-.btn.pri{background:var(--mint);border-color:var(--mint);color:#04120f;font-weight:600}
-.btn.pri:hover{background:#7ff2e0}
-.btn.dan{color:var(--rose);border-color:#3d1c24}
-.btn:disabled{opacity:.4}
-.hint{font-size:9px;color:var(--dim2);line-height:1.65;margin:0;padding:0 12px 9px}
-.note{font-size:9.5px;color:var(--dim);background:#06080a;border:1px solid var(--hair);border-radius:3px;
-  padding:8px 10px;line-height:1.65}
-.warnbox{border:1px solid #3d3520;background:#131006;border-radius:3px;padding:9px 11px;
-  font-size:9.5px;color:#c4b284;line-height:1.6}
-.steps{display:flex;border:1px solid var(--hair);border-radius:4px;overflow:hidden}
-.steps div{flex:1;padding:9px 12px;border-right:1px solid var(--hair)}
-.steps div:last-child{border-right:0}
-.steps .n{font-size:8.5px;color:var(--dim2);letter-spacing:.06em}
-.steps .t{font-size:10px;color:var(--dim);margin-top:2px}
-.steps div.done .n{color:var(--lime)}
-.steps div.cur{background:#0f1a1c}
-.steps div.cur .n{color:var(--mint)} .steps div.cur .t{color:var(--fg)}
-.evd{width:100%;border-collapse:collapse;font-size:10px}
-.evd td{padding:7px 12px;border-bottom:1px solid #12171c;vertical-align:top}
-.evd tr:last-child td{border-bottom:0}
-.evd td:first-child{width:88px;color:var(--dim2);font-size:8.5px;letter-spacing:.06em}
-.evd td:last-child{text-align:right;color:var(--dim);font-size:9px;white-space:nowrap}
-.evd .ok{color:var(--lime)}
-.pill{font-size:8.5px;padding:2px 6px;border-radius:2px;border:1px solid var(--hair2);color:var(--dim);
-  white-space:nowrap;letter-spacing:.03em}
-.pill.ok{color:var(--lime);border-color:#2c3d18}
-.pill.bad{color:var(--rose);border-color:#3d1c24}
-.pill.off{color:var(--dim2)}
-.ch{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #12171c}
-.ch:last-child{border-bottom:0}
-.ch .nm{flex:1;font-size:10.5px;color:var(--fg2)}
-.ch .nm small{display:block;font-size:9px;color:var(--dim2);margin-top:2px}
-.recs{width:100%;border-collapse:collapse;font-size:9.5px}
-.recs th{text-align:left;font-size:8.5px;letter-spacing:.1em;color:var(--dim2);text-transform:uppercase;
-  font-weight:400;padding:7px 12px;border-bottom:1px solid var(--hair)}
-.recs td{padding:7px 12px;border-bottom:1px solid #12171c;color:var(--fg2)}
-.recs tr:last-child td{border-bottom:0}
-.recs td.t{font-size:9px;color:var(--dim2);white-space:nowrap}
-.recs td.s{text-align:right}
-
-/* ── 头像球：极简环形，只保留状态语义 ─────────────────── */
-.desktop{width:100%;max-width:980px;height:520px;border-radius:9px;position:relative;overflow:hidden;
-  background:radial-gradient(100% 80% at 85% 50%,#0b1a1c 0%,#081013 42%,#040607 100%);
-  border:1px solid var(--hair2);display:grid;place-items:center}
-.desktop .fake{font-size:10px;color:#1a2429;letter-spacing:.28em;text-transform:uppercase}
-.desk-label{position:absolute;left:16px;top:14px;font-size:8.5px;letter-spacing:.18em;
-  color:#2c3a40;text-transform:uppercase}
-.orb{position:absolute;right:22px;top:50%;transform:translateY(-50%);width:44px;height:44px;cursor:pointer}
-.orb svg{width:44px;height:44px;overflow:visible}
-.orb .bgc{fill:#081013;stroke:#20303a;stroke-width:1}
-.orb .segs{fill:none;stroke-width:3;stroke-linecap:butt}
-.orb .core-dot{fill:var(--rose)}
-.orb .badge{position:absolute;top:-3px;right:-4px;height:14px;min-width:14px;border-radius:7px;
-  background:var(--rose);color:#12060a;font:700 8.5px/14px var(--mono);text-align:center;padding:0 3px}
-.orb-sum{position:absolute;right:76px;top:50%;transform:translateY(-50%);width:270px;
-  background:#070c0ff5;border:1px solid #20303a;border-radius:6px;padding:11px 13px;
-  box-shadow:0 16px 44px #000d}
-.orb-sum .h{font-size:8.5px;letter-spacing:.14em;color:var(--dim2);text-transform:uppercase;
-  margin-bottom:7px;display:flex;align-items:center;gap:6px}
-.orb-sum .h .bd{width:5px;height:5px;border-radius:50%;background:var(--rose)}
-.orb-sum .bar{height:4px;display:flex;gap:1px;margin-bottom:7px}
-.orb-sum .bar i{height:100%;border-radius:1px}
-.orb-sum .row{display:flex;justify-content:space-between;font-size:9.5px;color:var(--dim);padding:3px 0}
-.orb-sum .row b{color:var(--fg2);font-weight:500}
-.orb-sum .row .r2{color:var(--rose)}
-
-/* 完成记录 */
-.hist-head{flex:none;display:flex;align-items:baseline;gap:13px;padding:14px 18px;border-bottom:1px solid var(--hair)}
-.hist-head .big{font-size:16px;color:var(--fg)}
-.hist-head .big b{color:var(--lime);font-weight:600}
-.hist-head .sub{font-size:9px;color:var(--dim2)}
-.hist-body{flex:1;overflow-y:auto}
-.hday{position:sticky;top:0;background:#080b0e;padding:7px 18px;font-size:8.5px;letter-spacing:.14em;
-  color:var(--dim2);border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);
-  text-transform:uppercase;z-index:1}
-.hrow{display:grid;grid-template-columns:1fr auto auto;gap:14px;align-items:baseline;
-  padding:11px 18px;border-bottom:1px solid #12171c;cursor:pointer}
-.hrow:hover{background:#0d1116}
-.hrow .tt{font-size:10.5px;color:var(--fg2)}
-.hrow .tt small{display:block;font-size:9px;color:var(--dim2);margin-top:2px}
-.hrow .n{font-size:9.5px;color:var(--dim);text-align:right;white-space:nowrap}
-.hrow .ev{font-size:9px;color:var(--sky);white-space:nowrap}
+/* 泳道保持固定密度，滚动仅发生在任务列表和介入轨道内。 */
+.win{position:relative;min-width:0}
+.win.narrow{height:570px}
+.tools{display:flex}
+.bar .conn{white-space:nowrap}
+.bar .conn.problem{color:var(--rose)}.bar .conn.problem i{background:var(--rose);box-shadow:none}
+.ibtn.on{color:var(--mint);background:#132a28}
+.cmdbar{text-align:left}
+.quick svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.3}
+.timestrip{display:flex;align-items:center;gap:10px;padding:6px 13px;border-bottom:1px solid var(--hair);background:#080b0e;flex:none}
+.stream{font-size:8.5px;color:var(--dim);letter-spacing:.06em;display:flex;align-items:center;gap:5px}
+.stream i{height:4px;width:4px;background:var(--mint);border-radius:50%}
+.window-pick{display:flex;border:1px solid var(--hair2);border-radius:3px;padding:2px;gap:2px}
+.window-pick button{font-size:8.5px;color:var(--dim);padding:1px 7px;border-radius:2px}
+.window-pick button.on{color:var(--mint);background:#132a28}
+.window-pick button:hover{color:var(--fg)}
+.legend{display:flex;align-items:center;gap:5px;margin-left:auto;font-size:8px;color:var(--dim2)}
+.legend i{width:7px;height:5px;margin-left:6px;border-radius:1px}
+.legend .done{background:#2d6b5f}.legend .active{background:var(--sky)}.legend .stuck{background:#8f2a3a}
+.legend .earlier{margin-left:8px}
+.axis .scale{overflow:hidden}
+.axis .tick.end{left:auto;right:0;padding:0 6px;background:var(--raise)}
+.lanes{background:linear-gradient(90deg,transparent 153px,var(--hair2) 153px,var(--hair2) 154px,transparent 154px),repeating-linear-gradient(180deg,transparent 0,transparent 71px,var(--hair) 71px,var(--hair) 72px)}
+.lane{min-height:72px;flex:0 0 72px;text-align:left}
+.llab{gap:3px}
+.llab .nm{font-size:11px}
+.llab .current{font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+.track{border-left:0}
+.track .nowline{right:0;left:auto;transform:none}
+.partial-track{position:absolute;left:8px;bottom:6px;font-size:7.5px;color:var(--amber)}
+.track-hint{position:absolute;right:8px;bottom:6px;font-size:7.5px;color:var(--dim2);background:var(--raise)}
+.no-segments{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim2);font-size:8.5px}
+.blk{height:14px}
+.blkmark{pointer-events:auto}
+.blkmark.b{top:65%}.blkmark.w{top:40%}
+.clip{z-index:4}
+.stuck-count{color:var(--rose)}
+.rail-body{max-height:104px;min-height:49px}
+.acard{width:222px;min-height:80px}
+.rail-clear{padding:14px;color:var(--dim);font-size:9px}
+.empty-lanes{padding:28px 15px;color:var(--dim);text-align:center}
+.ncard .dot.blocked{background:var(--rose)}.ncard .dot.running{background:var(--sky)}
+.ncard .dot.waiting{background:var(--amber)}.ncard .dot.done{background:var(--lime)}.ncard .dot.unknown{background:var(--dim2)}
+.nmeta{display:flex;gap:9px;font-size:8.5px;color:var(--dim2);align-items:center}
+.nmeta b{color:var(--fg2);font-weight:500}.nmeta .go{margin-left:auto;color:var(--dim)}
+.ncard .mini i.completed{background:#2d6b5f}.ncard .mini i.inProgress{background:var(--sky)}
+.ncard .mini i.blocked{background:repeating-linear-gradient(45deg,#8f2a3a,#8f2a3a 3px,#5a1a25 3px,#5a1a25 6px)}
+.win.narrow .bar{gap:6px;padding-left:10px}.win.narrow .bar .conn{font-size:8px;padding:1px 4px}
+.win.narrow .bar h1{font-size:9px;letter-spacing:.04em}.win.narrow .tools .ibtn{width:23px}
+.win.narrow .wctl button{width:24px}.win.narrow .bar .mark{display:none}
+.win.narrow .timestrip{padding:5px 11px;justify-content:space-between}
+.win.narrow .rail-h{padding:5px 11px}.win.narrow .acard{min-height:69px;padding:7px 10px;width:210px}
+.win.narrow .acard .at{-webkit-line-clamp:1}.win.narrow .rail-body{max-height:86px}
+.win.narrow .foot{font-size:8px;gap:5px;padding:0 10px}.win.narrow .foot .r{gap:9px}
+.lane:focus-visible,.ncard:focus-visible,.acard:focus-visible{outline:1px solid var(--mint);outline-offset:-2px}
+/* 浅色仍保留指挥台的时间网格与低饱和状态色。 */
+:root[data-theme="light"]{--raise:#fff;--raise2:#f5f7fa;--raise3:#eaf0f5;--hair:#e1e6ec;--hair2:#ccd5df;--hair3:#aebdcb;--mint:#0c8372;--sky:#2563b8;--rose:#be3550;--lime:#52831f;--amber:#966c06}
+[data-theme="light"] .timestrip,[data-theme="light"] .rail{background:var(--raise2)}
+[data-theme="light"] .lane:hover,[data-theme="light"] .ncard:hover,[data-theme="light"] .acard:hover{background:var(--raise3)}
+[data-theme="light"] .lane.sel{background:#e7f1f4}[data-theme="light"] .lane.sel .llab .nm{color:var(--fg)}
+[data-theme="light"] .ncard .mini{background:#edf1f5;border-color:var(--hair)}
+[data-theme="light"] .ibtn.on,[data-theme="light"] .window-pick button.on{background:#dceee9}
+[data-theme="light"] .screen-dock{background:#ffffffee;border-color:var(--hair2)}
+[data-theme="light"] .screen-dock button.on{color:#fff}[data-theme="light"] .screen-dock button:hover{background:var(--raise3);color:var(--fg)}
+@media(max-width:650px){.proto{padding:16px 8px 100px}.proto-tag{flex-wrap:wrap;gap:5px}.proto-tag .rr{display:none}.screen-dock{max-width:calc(100vw - 20px);overflow-x:auto;bottom:10px}.screen-dock button{padding:5px 8px}.win.wide{width:980px;flex-shrink:0}.stage{overflow-x:auto;justify-content:flex-start}.win.narrow{margin:auto}}
 </style>
+<link rel="stylesheet" href="shared/mock.css">
 </head>
 <body>
 <div class="proto">
@@ -321,36 +252,16 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;paddin
 
 <script src="shared/data.js"></script>
 <script src="shared/kit.js"></script>
+<script src="shared/mock.js"></script>
 <script>
 const K = KIT, FB = window.FB;
-const S = { screen: 'main', sel: 'pay', palette: false, theme: 'dark' };
+const S = { screen: 'main', sel: 'pay', window: 3600 };
 if (location.hash.length > 1) S.screen = location.hash.slice(1);
-const stat = { enabled: true, dock: true, taskbar: false, autostart: false };
-const opts = { ch: { wechat: true, wecom: true, feishu: false }, sub: { blocker_opened: true, task_completed: true, blocker_resolved: false } };
-
 const SCREENS = [
   ['main','主窗 980'], ['narrow','窄窗 392'], ['dock','贴边头像球'], ['|', ''],
   ['completed','完成记录'], ['settings','设置'], ['integration','Codex 接入'], ['|', ''],
   ['notifications','消息通知'], ['updates','版本更新'], ['repair','修复记录'],
 ];
-
-/* 时间窗：以最早起点为准，但上限 60 分钟；更长任务的左端按窗口裁切，符合“滚动窗口”语义。 */
-const WINDOW = (() => {
-  const now = FB.now();
-  let earliest = now;
-  for (const t of FB.tasks) {
-    if (t.status === 'completed' || t.status === 'unreported') continue;
-    for (const s of t.plan) if (s.startedAt && s.startedAt < earliest) earliest = s.startedAt;
-    if (t.startedAt && t.startedAt < earliest) earliest = t.startedAt;
-  }
-  const span = Math.ceil((now - earliest) / 600) * 600;
-  return Math.min(3600, Math.max(1800, span));
-})();
-const WINDOW_LABEL = WINDOW >= 3600 ? Math.round(WINDOW / 3600) + ' 小时' : Math.round(WINDOW / 60) + ' 分钟';
-const T0 = () => FB.now() - WINDOW;
-const pos = (ts) => Math.max(0, Math.min(100, ((ts - T0()) / WINDOW) * 100));
-const width = (a, b) => Math.max(0.4, pos(b) - pos(a));
-
 const ICON = {
   min:'<path d="M4 10h12"/>', max:'<rect x="4" y="4" width="12" height="12" rx="1"/>',
   close:'<path d="m5 5 10 10M15 5 5 15"/>',
@@ -361,41 +272,23 @@ const ICON = {
 };
 const ic = (n) => `<svg viewBox="0 0 20 20">${ICON[n]}</svg>`;
 
-const CMD = [
-  ['导航', [
-    ['完成记录', '查看已完成任务与证据', '⇧H', 'completed'],
-    ['切换任务', '在泳道间跳转', '↑↓', null],
-    ['复制会话 ID', '当前选中任务的会话标识', '⌘C', null],
-  ]],
-  ['配置', [
-    ['看板设置', '主题 · 启动 · 头像摘要 · 数据目录', '⌘,', 'settings'],
-    ['Codex 接入', '配置写入 · 连接回执 · 同步验证', '⌘I', 'integration'],
-    ['消息通知', '微信 / 企微 / 飞书 渠道与订阅', '⌘N', 'notifications'],
-    ['版本更新', '检查 · 下载 · 安装确认', '⌘U', 'updates'],
-    ['修复任务记录', '安全修复并重启看板', '', 'repair'],
-  ]],
-  ['动作', [
-    ['收起为头像球', '贴边常驻，悬停看摘要', '⌘D', null],
-    ['退出看板', '不结束 Codex 或采集器', '', null],
-  ]],
-];
-
-function bar(title, conn, tools) {
-  return `<div class="bar"><span class="mark">&gt;_</span><h1>${title}</h1>
-    <span class="conn"><i></i>${conn}</span><div class="spacer"></div>
-    <div class="tools">${tools}</div>
-    <div class="wctl"><button>${ic('min')}</button><button>${ic('max')}</button><button class="x">${ic('close')}</button></div>
+function bar(narrow) {
+  return `<div class="bar"><span class="mark">&gt;_</span><h1>${narrow ? '指挥台' : '并发指挥台'}</h1>
+    <button class="conn ${['conflict','partial','error'].includes(FB.connection.state) ? 'problem' : ''}" data-screen="integration" title="查看 Codex 接入"><i></i>${MOCK.connectionLabel()}</button><div class="spacer"></div>
+    <div class="tools">
+      <button class="ibtn" data-mock="pin" title="切换置顶" aria-label="切换置顶">${ic('pin')}</button>
+      <button class="ibtn" data-mock="dock" title="收起为头像球" aria-label="收起为头像球">${ic('dock')}</button>
+      <button class="ibtn" data-mock="palette" title="命令面板" aria-label="命令面板">${ic('more')}</button>
+    </div>
+    <div class="wctl"><button data-mock="minimize" title="最小化" aria-label="最小化">${ic('min')}</button><button data-mock="maximize" title="切换窗口大小" aria-label="切换窗口大小">${ic('max')}</button><button class="x" data-mock="close" title="关闭窗口" aria-label="关闭窗口">${ic('close')}</button></div>
   </div>`;
 }
 
-/* 常驻命令条：一级功能不再藏在“更多”菜单里。 */
 function cmdstrip() {
   return `<div class="cmdstrip">
-    <div class="cmdbar" data-palette="1">
-      <span class="k">›</span>
-      <span class="ph">搜索任务，或输入命令…</span>
-      <span class="kbd">⌘K</span>
-    </div>
+    <button class="cmdbar" data-mock="palette" title="搜索任务与命令 Ctrl+K">
+      <span class="k">›</span><span class="ph">搜索任务，或输入命令…</span><span class="kbd">Ctrl K</span>
+    </button>
     <div class="quick">
       <button data-screen="integration" title="Codex 接入">接入</button>
       <button data-screen="notifications" title="消息通知">通知</button>
@@ -405,383 +298,97 @@ function cmdstrip() {
   </div>`;
 }
 
-function axis() {
-  const now = FB.now();
-  const ticks = [1.5, 1.2, 0.9, 0.6, 0.3].map((h) => now - h * 3600);
+const pos = (ts, now) => (ts - (now - S.window)) / S.window * 100;
+const markPos = (ts, now) => Math.max(1, Math.min(99, pos(ts, now)));
+function segments(step, now, task) {
+  const recorded = Array.isArray(step.segments) ? step.segments : step.timing?.partial ? [] : [{startedAt:step.startedAt,endedAt:step.endedAt}];
+  return recorded.flatMap(record => {
+    if (!Number.isFinite(record.startedAt)) return [];
+    const end = record.endedAt ?? step.endedAt ?? (['inProgress','blocked'].includes(step.status) ? task.endedAt ?? now : record.startedAt);
+    const start = Math.max(record.startedAt, now - S.window), finish = Math.min(end, now);
+    if (finish <= start) return [];
+    return [{left:pos(start,now),width:Math.max(.25,(finish-start)/S.window*100),clipped:record.startedAt < now-S.window}];
+  });
+}
+function timestrip(narrow) {
+  return `<div class="timestrip"><span class="stream"><i></i>${narrow ? '执行片段' : '执行片段 · 滚动时间窗'}</span>
+    <div class="window-pick" aria-label="泳道时间窗口">${[1800,3600,7200].map(seconds => `<button data-window="${seconds}" class="${S.window === seconds ? 'on' : ''}" aria-pressed="${S.window === seconds}">${seconds / 60}m</button>`).join('')}</div>
+    ${narrow ? '' : '<span class="legend"><i class="done"></i>完成<i class="active"></i>进行中<i class="stuck"></i>受阻<span class="earlier">‹ 更早片段</span></span>'}
+  </div>`;
+}
+function axis(now) {
   return `<div class="axis"><div class="lab">任务 / 时间</div><div class="scale">
-    ${ticks.map((ts, i) => `<span class="tick" style="left:${pos(ts)}%">${i === 5 ? '-' + K.fmtCompact(now - ts) : K.fmtClock(ts)}</span>`).join('')}
-    <span class="tick end" style="left:100%;transform:translateX(-100%);padding-right:6px;color:var(--mint)">现在</span>
+    ${[0,1,2,3].map(i => `<span class="tick" style="left:${i * 25}%">${K.fmtClock(now - S.window + S.window * i / 4).slice(0,5)}</span>`).join('')}
+    <span class="tick end">现在</span>
   </div></div>`;
 }
-
-function laneBlock(s, now) {
-  const end = s.endedAt || (s.status === 'inProgress' ? now : s.startedAt);
-  if (!s.startedAt) return '';
-  const l = pos(s.startedAt), w = width(s.startedAt, end);
-  return `<div class="blk ${s.status}" style="left:${l}%;width:${w}%" title="${K.esc(s.title)} · ${K.STATUS[s.status]}"></div>`;
+function laneBlock(step, now, task) {
+  return segments(step,now,task).map(part => `<span class="blk ${step.status}" style="left:${part.left}%;width:${part.width}%;top:${step.status === 'blocked' ? 65 : 40}%" title="${K.esc(step.title)} · ${K.STATUS[step.status]}${step.timing?.partial ? ' · 部分计时' : ''}"></span>`).join('');
 }
-
-function lane(t, now) {
-  const tn = K.tone(t);
-  const ob = K.openBlockers(t);
-  const blocks = t.plan.map(s => laneBlock(s, now)).join('');
-  const clipped = t.plan.some(s => s.startedAt && s.startedAt < T0());
-  const clipMark = clipped ? '<span class="clip"></span>' : '';
-  const marks = [
-    ...ob.map(b => `<span class="blkmark b" style="left:${pos(b.openedAt)}%" title="${K.esc(b.title)}">!</span>`),
-    ...(t.status === 'waiting' ? [`<span class="blkmark w" style="left:${pos(t.startedAt + 600)}%" title="等待确认">?</span>`] : []),
-  ].join('');
-  // 泳道内嵌一条“步骤完成度”折线，用来在不展开的情况下看出节奏
-  const pts = [];
-  for (let i = 0; i <= 20; i++) {
-    const ts = T0() + (WINDOW * i) / 20;
-    const n = t.plan.filter(s => s.endedAt && s.endedAt <= ts).length;
-    const y = 40 - (n / Math.max(1, t.plan.length)) * 32;
-    pts.push(`${(i / 20) * 26},${y}`);
-  }
-  const el = K.elapsed(t);
-  return `<div class="lane ${S.sel === t.id ? 'sel' : ''}" data-lane="${t.id}">
-    <div class="llab">
-      <div class="top"><span class="dot ${tn}"></span><span class="nm">${K.esc(t.title.split(' · ')[0])}</span></div>
-      <div class="sub"><b>${K.doneSteps(t)}/${t.plan.length}</b> · ${K.fmtCompact(el)}${ob.length ? ` · <span style="color:var(--rose)">!${ob.length}</span>` : ''}</div>
+function lane(task, now) {
+  const tone = K.tone(task), blockers = K.openBlockers(task);
+  const blocks = task.plan.map(step => laneBlock(step, now,task)).join('');
+  const clipped = task.plan.some(step => segments(step,now,task).some(part=>part.clipped));
+  const marks = blockers.filter(blocker=>Number.isFinite(blocker.openedAt)).map(blocker => `<button class="blkmark b" data-mock="detail" data-task="${task.id}" data-blocker="${blocker.id}" style="left:${markPos(blocker.openedAt, now)}%" title="${K.esc(blocker.title)}${blocker.openedAt < now - S.window ? ' · 早于当前窗口' : ''}" aria-label="查看卡点：${K.esc(blocker.title)}">!</button>`).join('') + (task.status === 'waiting' && Number.isFinite(task.waitingSince) ? `<button class="blkmark w" data-mock="detail" data-task="${task.id}" style="left:${markPos(task.waitingSince,now)}%" title="等待确认${task.waitingSince < now-S.window ? ' · 早于当前窗口' : ''}" aria-label="查看等待确认的任务">?</button>` : '');
+  return `<div class="lane ${S.sel === task.id ? 'sel' : ''}" role="button" tabindex="0" data-mock="detail" data-task="${task.id}" aria-label="查看任务：${K.esc(task.title)}">
+    <div class="llab"><div class="top"><span class="dot ${tone}"></span><span class="nm" title="${K.esc(task.title)}">${K.esc(task.tag || task.title)}</span></div>
+      <div class="sub"><b>${K.doneSteps(task)}/${task.plan.length}</b> · <span data-live-elapsed="${task.id}">${K.fmtCompact(K.elapsed(task))}</span>${task.timing?.partial ? ' · 部分' : ''}${blockers.length ? ` · <span class="stuck-count">!${blockers.length}</span>` : ''}</div>
+      <div class="current">${K.esc(task.currentStep || '等待结构化汇报')}</div>
     </div>
-    <div class="track">
-      <div class="grid">${[1,2,3,4,5].map(i => `<i style="left:${i * 16.66}%"></i>`).join('')}</div>
-      <svg class="spark" viewBox="0 0 26 44" preserveAspectRatio="none"><polyline points="${pts.join(' ')}"/></svg>
-      ${blocks}${marks}${clipMark}
-      <div class="nowline" style="left:100%;transform:translateX(-1px)"></div>
+    <div class="track"><div class="grid">${[0,25,50,75].map(left => `<i style="left:${left}%"></i>`).join('')}</div>
+      ${blocks}${marks}${clipped ? '<span class="clip" title="部分执行片段早于当前窗口"></span>' : ''}
+      ${!blocks ? '<span class="no-segments">此时间窗暂无已记录片段</span>' : ''}${task.plan.some(step=>step.timing?.partial) ? '<span class="partial-track">部分记录</span>' : ''}
+      <span class="nowline"></span><span class="track-hint">${K.STATUS[task.status] || task.status} ↗</span>
     </div>
   </div>`;
 }
-
-function rail() {
-  const items = K.actionItems(FB.tasks);
-  const now = FB.now();
-  return `<div class="rail">
-    <div class="rail-h"><span>介入轨道</span><b>${items.length}</b><span class="hint2">按卡点开放时间排序 · 最早的在前</span></div>
-    <div class="rail-body">${items.map(it => {
-      const t = it.task;
-      const label = it.kind === 'blocker' ? it.blocker.title : '等待你确认';
-      const owner = it.kind === 'blocker' ? it.blocker.owner : '你';
-      return `<div class="acard ${it.kind === 'waiting' ? 'wait' : ''}" data-lane="${t.id}">
-        <div class="at">${K.esc(label)}</div>
-        <div class="am"><span>${K.esc(t.tag)}</span><span class="w">${K.esc(owner)}</span>
-          <span class="d">${K.fmtCompact(now - it.at)}</span></div>
+function rail(tasks) {
+  const items = K.actionItems(tasks), now = FB.now();
+  return `<div class="rail"><div class="rail-h"><span>介入轨道</span><b>${items.length}</b><span class="hint2">最早开放在前</span></div>
+    <div class="rail-body">${items.length ? items.map(item => {
+      const task = item.task, blocker = item.blocker;
+      return `<div class="acard ${item.kind === 'waiting' ? 'wait' : ''}" role="button" tabindex="0" data-mock="detail" data-task="${task.id}"${blocker ? ` data-blocker="${blocker.id}"` : ''}>
+        <div class="at">${K.esc(blocker?.title || '等待你确认')}</div>
+        <div class="am"><span>${K.esc(task.tag || task.title)}</span><span class="w">${K.esc(blocker?.owner || '你')}</span><span class="d"${blocker ? ` data-live-blocker="${blocker.id}"` : ''}>${Number.isFinite(item.at) ? K.fmtCompact(now - item.at) : '时间未记录'}</span></div>
       </div>`;
-    }).join('')}</div>
+    }).join('') : '<div class="rail-clear">✓ 当前筛选下无需介入</div>'}</div></div>`;
+}
+function narrowCard(task, now) {
+  const tone = K.tone(task), blockers = K.openBlockers(task);
+  const blocks = task.plan.map(step => segments(step,now,task).map(part => `<i class="${step.status}" style="left:${part.left}%;width:${part.width}%"></i>`).join('')).join('');
+  return `<div class="ncard" role="button" tabindex="0" data-mock="detail" data-task="${task.id}" aria-label="查看任务：${K.esc(task.title)}">
+    <div class="h"><span class="dot ${tone}"></span><span class="nm">${K.esc(task.title)}</span><span class="tm" data-live-elapsed="${task.id}">${K.fmtCompact(K.elapsed(task))}</span></div>
+    <div class="nmeta"><b>${K.doneSteps(task)}/${task.plan.length}</b><span>${K.STATUS[task.status] || task.status}</span>${task.timing?.partial ? '<span>部分计时</span>' : ''}${blockers.length ? `<span class="stuck-count">! ${blockers.length} 卡点</span>` : ''}<span class="go">↗</span></div>
+    <div class="mini">${blocks}${blockers.filter(blocker=>Number.isFinite(blocker.openedAt)).map(blocker => `<span class="nb" style="left:${markPos(blocker.openedAt,now)}%"></span>`).join('')}</div>
+    <div class="step">${K.esc(task.currentStep || '等待结构化汇报')}</div>
   </div>`;
 }
-
 function mainScreen(narrow) {
-  const now = FB.now();
-  const act = FB.tasks.filter(t => t.status !== 'completed' && (t.status !== 'unreported' || t.plan.length));
-  if (narrow) {
-    const cards = act.map(t => {
-      const tn = K.tone(t), ob = K.openBlockers(t);
-      const blocks = t.plan.map(s => {
-        const end = s.endedAt || (s.status === 'inProgress' ? now : s.startedAt);
-        if (!s.startedAt) return '';
-        const c = { completed: '#2d6b5f', inProgress: 'var(--sky)', blocked: '#8f2a3a', pending: '#1b242c' }[s.status];
-        return `<i style="left:${pos(s.startedAt)}%;width:${width(s.startedAt, end)}%;background:${c}"></i>`;
-      }).join('');
-      const nb = ob.map(b => `<span class="nb" style="left:${pos(b.openedAt)}%"></span>`).join('');
-      return `<div class="ncard" data-lane="${t.id}">
-        <div class="h"><span class="dot ${tn}" style="background:${{blocked:'var(--rose)',running:'var(--sky)',waiting:'var(--amber)',done:'var(--lime)',unknown:'var(--dim2)'}[tn]}"></span>
-          <span class="nm">${K.esc(t.title)}</span><span class="tm">${K.fmtCompact(K.elapsed(t))}</span></div>
-        <div class="mini">${blocks}${nb}</div>
-        <div class="step">${K.esc(t.currentStep || '—')}</div>
-      </div>`;
-    }).join('');
-    return `<div class="win narrow">
-      ${bar('指挥台', '同步已验证', `<button class="ibtn" data-palette="1">${ic('more')}</button>`)}
-      ${cmdstrip()}
-      <div class="nlist">${cards}</div>
-      ${rail()}
-      <div class="foot"><span>${act.length} 个任务</span><span class="r"><button data-screen="completed">完成记录</button><span>0.14.1</span></span></div>
-      ${S.palette ? palette() : ''}
-    </div>`;
-  }
-  return `<div class="win wide">
-    ${bar('并发指挥台', '同步已验证',
-      `<button class="ibtn" title="置顶">${ic('pin')}</button>
-       <button class="ibtn" title="收起为头像球">${ic('dock')}</button>
-       <button class="ibtn" title="更多" data-palette="1">${ic('more')}</button>`)}
-    ${cmdstrip()}
-    ${axis()}
-    <div class="lanes">${act.map(t => lane(t, now)).join('')}</div>
-    ${rail()}
-    <div class="foot"><span>泳道窗口 ${WINDOW_LABEL} · ${act.length} 个进行中</span>
-      <span class="r"><button data-screen="completed">完成记录 ${FB.tasks.filter(t=>t.status==='completed').length} ↗</button>
-        <button>复制会话 ID</button><span>0.14.1</span></span></div>
-    ${S.palette ? palette() : ''}
+  const now = FB.now(), tasks = MOCK.tasks();
+  return `<div class="win ${narrow ? 'narrow' : 'wide'}">
+    ${bar(narrow)}${cmdstrip()}${MOCK.toolbar()}${timestrip(narrow)}
+    ${narrow ? `<div class="nlist">${tasks.map(task => narrowCard(task,now)).join('') || '<div class="empty-lanes">没有匹配的任务</div>'}</div>` : `${axis(now)}<div class="lanes">${tasks.map(task => lane(task,now)).join('') || '<div class="empty-lanes">没有匹配的任务</div>'}</div>`}
+    ${rail(tasks)}
+    <div class="foot"><span>${tasks.length} 个任务 · 最近 ${S.window / 60}m</span><span class="r"><button data-mock="copy-session">复制会话 ID</button><button data-screen="completed">完成 ${FB.tasks.filter(task=>task.status==='completed').length} ↗</button></span></div>
   </div>`;
 }
-
-function paletteList() {
-  const icon = { '导航': '›', '配置': '◆', '动作': '◇' };
-  const out = [];
-  for (const [group, items] of CMD) {
-    out.push(`<div class="pgroup">${group}</div>`);
-    for (const [lb, sub, kk, screen] of items) {
-      const on = group === '配置' && lb === '看板设置';
-      out.push(
-        `<div class="pitem${on ? ' on' : ''}"${screen ? ` data-screen="${screen}"` : ''}>` +
-        `<span class="ic2">${icon[group] || '›'}</span>` +
-        `<span class="lb">${lb}<small>${sub}</small></span>` +
-        (kk ? `<span class="kk">${kk}</span>` : '') +
-        `</div>`);
-    }
-  }
-  return out.join('');
-}
-
-function palette() {
-  return `<div class="palette" data-palette-close="1"><div class="pbox">
-    <div class="pinput"><span class="arrow">›</span><input placeholder="输入任务名或命令…" autofocus>
-      <span class="kbd" style="font-size:8.5px;color:var(--dim2);border:1px solid var(--hair2);border-radius:2px;padding:0 4px">ESC</span></div>
-    <div class="plist">${paletteList()}</div>
-  </div></div>`;
-}
-
-function dockScreen() {
-  const segs = [['var(--sky)', 32], ['#8f2a3a', 12], ['#2d6b5f', 20]];
-  const total = segs.reduce((n, s) => n + s[1], 0);
-  return `<div class="desktop">
-    <span class="desk-label">桌面 · 屏幕右缘</span>
-    <div class="fake">prototype desktop</div>
-    <div class="orb">
-      <svg viewBox="0 0 44 44">
-        <circle class="bgc" cx="22" cy="22" r="19"/>
-        <g transform="rotate(-90 22 22)">
-          ${(() => { let acc = 0; return segs.map(([c, v]) => {
-            const len = (v / 100) * 119;
-            const s = `<circle class="segs" cx="22" cy="22" r="19" stroke="${c}"
-              stroke-dasharray="${len} 119" stroke-dashoffset="${-acc}"/>`;
-            acc += len; return s;
-          }).join(''); })()}
-        </g>
-        <circle class="core-dot" cx="22" cy="22" r="2.2"/>
-      </svg>
-      <span class="badge">3</span>
-    </div>
-    <div class="orb-sum">
-      <div class="h"><span class="bd"></span>3 个任务在跑 · 3 个卡点</div>
-      <div class="bar">
-        <i style="width:32%;background:var(--sky)"></i>
-        <i style="width:12%;background:#8f2a3a"></i>
-        <i style="width:20%;background:#2d6b5f"></i>
-        <i style="width:36%;background:#1b242c"></i>
-      </div>
-      <div class="row"><span>支付重构</span><span>3/7 · <b class="r2">2 卡点</b></span></div>
-      <div class="row"><span>日志清洗</span><span>3/9 · <b>运行中</b></span></div>
-      <div class="row"><span>数据迁移</span><span>2/4 · <b class="r2">1 卡点</b></span></div>
-      <div class="row" style="border-top:1px solid #121a20;margin-top:3px;padding-top:5px">
-        <span style="color:var(--dim2)">点击恢复面板</span><span style="color:var(--dim2)">⌘K</span></div>
-    </div>
-  </div>`;
-}
-
-function completedScreen() {
-  const done = FB.tasks.filter(t => t.status === 'completed');
-  const now = FB.now();
-  return `<div class="win history">
-    ${bar('完成记录', '只读 · 2 项', `<button class="ibtn">${ic('close')}</button>`)}
-    <div class="hist-head"><span class="big"><b>${done.length}</b> 项已完成</span>
-      <span class="sub">独立窗口 · 主窗保持紧凑</span></div>
-    <div class="hist-body">
-      <div class="hday">今天</div>
-      ${done.map(t => `<div class="hrow">
-        <div class="tt">${K.esc(t.title)}<small>${K.esc(t.tag)} · ${t.plan.length} 步骤 · ${K.esc(t.cwd.split(/[\\/]/).filter(Boolean).at(-1))}</small></div>
-        <div class="n">${K.fmtCompact((t.endedAt || now) - (t.startedAt || now))}</div>
-        <div class="ev">${t.evidence.length} 证据 ↗</div>
-      </div>`).join('')}
-    </div>
-    <div class="foot"><span>点击查看完整清单与证据</span><span class="r"><span>0.14.1</span></span></div>
-  </div>`;
-}
-
-function settingsScreen() {
-  const rows = [
-    ['开机自启', '登录 Windows 后自动启动', 'autostart'],
-    ['在任务栏中显示', '关闭时仅保留托盘图标', 'taskbar'],
-    ['消息浮窗通知', '任务与清单变化时在屏幕角落提醒', 'enabled'],
-  ];
-  return `<div class="win utility">
-    ${bar('设置', '独立窗口 · 置顶', '')}
-    <div class="ubody">
-      <div class="sec"><h3>外观与启动</h3>
-        ${rows.map(([lb, sub, key]) => `<div class="srow"><div class="label">${lb}<small>${sub}</small></div>
-          <div class="sw ${stat[key] ? 'on' : ''}" data-toggle="${key}"></div></div>`).join('')}
-        <div class="srow"><div class="label">通知停留时长<small>卡点通知常驻到手动关闭</small></div>
-          <input class="inp" style="font:inherit;font-size:10px;color:var(--fg2);background:#06080a;border:1px solid var(--hair2);border-radius:3px;padding:4px 6px;width:48px;text-align:right;font-family:var(--mono)" value="3">
-          <span style="font-size:9px;color:var(--dim2)">秒</span></div>
-        <div class="srow"><div class="label">头像摘要</div>
-          <select style="font:inherit;font-size:10px;color:var(--fg2);background:#06080a;border:1px solid var(--hair2);border-radius:3px;padding:4px 6px">
-            <option>固定显示</option><option selected>悬停显示</option><option>不显示</option></select></div>
-      </div>
-      <div class="sec"><h3>数据目录</h3>
-        <div class="srow"><div class="label"><small style="margin:0">当前</small><code style="margin-top:5px;display:inline-block">C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data</code></div>
-          <button class="btn">打开</button></div>
-        <div class="srow"><div class="label">迁移到<small>离线复制与切换，非在线热迁移</small></div>
-          <input placeholder="新的完整目录路径" style="font:inherit;font-size:10px;color:var(--fg2);background:#06080a;border:1px solid var(--hair2);border-radius:3px;padding:4px 7px;width:180px;font-family:var(--mono)"></div>
-        <p class="hint">迁移前先用新版重新连接，完整退出所有 Codex 会话并暂停上报。旧目录必须保留用于路径重定向。</p>
-      </div>
-      <div class="sec"><h3>外部渠道</h3>
-        <div class="srow"><div class="label">微信 / 企微 / 飞书<small>独立开关，不受浮窗通知设置影响</small></div>
-          <button class="btn" data-screen="notifications">配置 ↗</button></div>
-      </div>
-      <div class="sec"><h3>维护</h3>
-        <div class="srow"><div class="label">修复任务记录<small>保留原始记录，不强行结束会话</small></div>
-          <button class="btn" data-screen="repair">修复并重启…</button></div>
-        <div class="srow"><div class="label">当前版本 0.14.1</div>
-          <button class="btn" data-screen="updates">检查更新 ↗</button></div>
-      </div>
-    </div>
-    <div class="foot"><span>改动即时保存</span><span class="r"><button>关闭</button></span></div>
-  </div>`;
-}
-
-function integrationScreen() {
-  const con = FB.connection, now = FB.now();
-  return `<div class="win utility">
-    ${bar('接入', 'DEV · 本机 Codex', '')}
-    <div class="ubody">
-      <div class="steps">
-        <div class="done"><div class="n">01 ✓</div><div class="t">配置写入</div></div>
-        <div class="done"><div class="n">02 ✓</div><div class="t">连接回执</div></div>
-        <div class="cur"><div class="n">03 ●</div><div class="t">会话与同步</div></div>
-      </div>
-      <div class="note" style="border-color:#21402c;color:#8fcf9f">✓ 接入与任务同步已验证。该回执不代表 Codex 此刻实时在线。</div>
-      <div class="sec"><h3>分层证据</h3>
-        <table class="evd">
-          <tr><td>配置写入</td><td>本工具配置已写入</td><td class="ok">✓</td></tr>
-          <tr><td>Codex 授权</td><td>无法直接读取，请在 Codex 确认</td><td>—</td></tr>
-          <tr><td>组件回执</td><td>已确认过连接 · 非心跳</td><td class="ok">${K.fmtDateTime(now - con.mcpConnectedAgo)}</td></tr>
-          <tr><td>会话事件</td><td>会话事件已收到</td><td class="ok">${K.fmtDateTime(now - con.sessionReceivedAgo)}</td></tr>
-          <tr><td>任务同步</td><td>任务同步已验证</td><td class="ok">${K.fmtDateTime(now - con.syncVerifiedAgo)}</td></tr>
-        </table>
-      </div>
-      <div class="sec"><h3>本机 Codex</h3>
-        <div class="srow"><code style="max-width:none">C:\\Users\\chenqi\\.codex</code>
-          <span class="pill ok" style="margin-left:auto">本机</span></div>
-      </div>
-      <div class="sec"><h3>让正在做的任务显示到看板</h3>
-        <div class="srow" style="flex-direction:column;align-items:stretch;gap:7px">
-          <div class="label" style="font-size:10px">1 复制同步指令 · 2 回到 Codex 当前对话粘贴 · 3 回来确认任务出现</div>
-          <div style="display:flex;gap:7px"><button class="btn">复制同步指令</button><button class="btn pri">刷新状态</button></div>
-        </div>
-      </div>
-      <div class="warnbox">断开只移除仍属于本工具的条目，保留全部任务数据；不会覆盖陌生配置。</div>
-    </div>
-    <div class="foot"><span>恢复旧版连接前会先给出差异预览</span><span class="r"><button class="btn dan">断开…</button><button>关闭</button></span></div>
-  </div>`;
-}
-
-function notificationsScreen() {
-  const n = FB.notifications, now = FB.now();
-  return `<div class="win utility">
-    ${bar('通知', '独立窗口 · 置顶', '')}
-    <div class="ubody">
-      <div class="note">外部渠道独立开关；桌面浮窗不受影响。</div>
-      <div class="sec"><h3>渠道 <span>${Object.values(opts.ch).filter(Boolean).length} 个已启用</span></h3>
-        ${n.channels.map(c => {
-          const on = !!opts.ch[c.id];
-          const state = c.id === 'wechat' ? '已绑定 · 已启用' : c.id === 'wecom' ? '已配置 · 不代表测试通过' : '未配置';
-          return `<div class="ch"><div class="nm">${c.name}<small>${c.configured ? state : '未配置'}</small></div>
-            <span class="pill ${c.configured ? 'ok' : 'off'}">${c.configured ? '已配置' : '未配置'}</span>
-            <div class="sw ${on ? 'on' : ''}" data-ch="${c.id}"></div></div>`;
-        }).join('')}
-        <p class="hint">微信需扫码绑定收件人；企微与飞书使用机器人 webhook。保存配置不代表平台验证通过。</p>
-      </div>
-      <div class="sec"><h3>订阅事件</h3>
-        ${[['blocker_opened','卡点出现','需要你介入时通知'],['task_completed','任务完成','任务结束时通知'],['blocker_resolved','卡点解除','问题解决后同步状态']].map(e =>
-          `<div class="srow"><div class="label">${e[1]}<small>${e[2]}</small></div>
-           <div class="sw ${opts.sub[e[0]] ? 'on' : ''}" data-sub="${e[0]}"></div></div>`).join('')}
-      </div>
-      <div class="sec"><h3>发送记录</h3>
-        <table class="recs"><thead><tr><th>时间</th><th>渠道</th><th>事件</th><th style="text-align:right">状态</th></tr></thead>
-        <tbody>${n.records.map(r => `<tr>
-          <td class="t">${K.ago(now - r.atAgo, now)}</td>
-          <td>${r.channel === 'wechat' ? '微信' : r.channel === 'wecom' ? '企微' : '飞书'}</td>
-          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${K.esc(r.title)}</td>
-          <td class="s"><span class="pill ${r.status === 'sent' ? 'ok' : r.status === 'failed' ? 'bad' : 'off'}">${r.status === 'sent' ? '平台已受理' : r.status === 'failed' ? '投递失败' : '未投递'}</span></td>
-        </tr>`).join('')}</tbody></table></div>
-    </div>
-    <div class="foot"><span>平台受理不代表对方已读</span><span class="r"><button>关闭</button></span></div>
-  </div>`;
-}
-
-function updatesScreen() {
-  return `<div class="win utility">
-    ${bar('更新', '独立窗口', '')}
-    <div class="ubody">
-      <div class="sec"><h3>版本 <span>0.14.1 → 0.15.0</span></h3>
-        <div class="srow"><div class="label">发现可用更新<small>下载完成后仍需确认安装，不会自动重启</small></div>
-          <button class="btn pri">下载更新</button></div>
-        <p class="hint">更新只重启看板，不结束 Codex，也不影响正在进行的任务。</p>
-      </div>
-      <div class="sec"><h3>偏好</h3>
-        <div class="srow"><div class="label">自动检查更新</div><div class="sw on"></div></div>
-        <div class="srow"><div class="label">自动下载<small>自动下载不会自动安装</small></div><div class="sw on"></div></div>
-        <p class="hint">上次检查 ${K.fmtDateTime(FB.now() - 1800)}</p>
-      </div>
-      <div class="note">清单已用 Ed25519 签名；可在发布页核对 SHA256。</div>
-    </div>
-    <div class="foot"><span></span><span class="r"><button class="btn">发布页面 ↗</button><button>关闭</button></span></div>
-  </div>`;
-}
-
-function repairScreen() {
-  return `<div class="win utility">
-    ${bar('修复', '独立窗口', '')}
-    <div class="ubody">
-      <div class="note">任务记录无法正常显示时，可尝试安全修复并重启看板。原始记录会保留，进行中的会话不会被强行结束。</div>
-      <div class="sec"><h3>状态</h3>
-        <div class="srow"><div class="label">可尝试恢复任务记录<small>尚未开始。修复会先暂停写入，用一致性快照重建，再重启看板验证。</small></div></div>
-        <div class="srow"><div class="label" style="font-size:9px;color:var(--dim)">记录路径</div>
-          <code>C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data</code></div>
-      </div>
-      <div class="warnbox">部分历史记录可能无法找回。请勿删除原始记录目录。</div>
-      <div style="display:flex;gap:7px"><button class="btn pri">修复并重启</button><button class="btn">取消</button></div>
-    </div>
-    <div class="foot"><span>不会强行结束 Codex</span><span class="r"><button>关闭</button></span></div>
-  </div>`;
-}
-
 function render() {
-  const map = {
-    main: () => mainScreen(false), narrow: () => mainScreen(true), dock: dockScreen,
-    completed: completedScreen, settings: settingsScreen, integration: integrationScreen,
-    notifications: notificationsScreen, updates: updatesScreen, repair: repairScreen,
-  };
-  document.getElementById('stage').innerHTML = (map[S.screen] || map.main)();
-  document.getElementById('dock').innerHTML = SCREENS.map(([k, l]) =>
-    k === '|' ? '<span class="sep"></span>' : `<button class="${S.screen === k ? 'on' : ''}" data-screen="${k}">${l}</button>`).join('');
+  const screens = { main: () => mainScreen(false), narrow: () => mainScreen(true), dock: () => MOCK.dock('c') };
+  document.getElementById('stage').innerHTML = MOCK.utility(S.screen) || (screens[S.screen] || screens.main)();
+  document.getElementById('dock').innerHTML = SCREENS.map(([key,label]) => key === '|' ? '<span class="sep"></span>' : `<button class="${S.screen === key ? 'on' : ''}" data-screen="${key}">${label}</button>`).join('');
+  MOCK.afterRender();
 }
-
-document.addEventListener('click', (e) => {
-  const scr = e.target.closest('[data-screen]');
-  if (scr) { S.screen = scr.dataset.screen; S.palette = false; render(); return; }
-  const pl = e.target.closest('[data-palette]');
-  if (pl) { S.palette = !S.palette; render(); return; }
-  if (e.target.closest('[data-palette-close]') && !e.target.closest('.pbox')) { S.palette = false; render(); return; }
-  const lane = e.target.closest('[data-lane]');
-  if (lane) { S.sel = lane.dataset.lane; render(); return; }
-  const sw = e.target.closest('[data-toggle]');
-  if (sw) { stat[sw.dataset.toggle] = !stat[sw.dataset.toggle]; sw.classList.toggle('on'); return; }
-  const ch = e.target.closest('[data-ch]');
-  if (ch) { opts.ch[ch.dataset.ch] = !opts.ch[ch.dataset.ch]; render(); return; }
-  const sb = e.target.closest('[data-sub]');
-  if (sb) { opts.sub[sb.dataset.sub] = !opts.sub[sb.dataset.sub]; sb.classList.toggle('on'); }
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-window]');
+  if (button) { S.window = Number(button.dataset.window); render(); }
 });
-document.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault(); S.palette = !S.palette; render();
-  } else if (e.key === 'Escape' && S.palette) { S.palette = false; render(); }
+document.addEventListener('keydown', event => {
+  if (['Enter',' '].includes(event.key) && event.target.matches('.lane,.ncard,.acard')) {
+    event.preventDefault(); event.target.click();
+  }
 });
-
+MOCK.install({variant:'c',state:S,render,selected:()=>S.sel,select:(id)=>{S.sel=id;}});
 render();
-setInterval(() => { if (S.screen === 'main' || S.screen === 'narrow') render(); }, 1000);
 </script>
 </body>
 </html>

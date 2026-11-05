@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runningTaskSyncPrompt, isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, type Task } from '../src/model.ts';
+import { runningTaskSyncPrompt, isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, summaryTone, taskCounts, matchesTask, filterTasks, type Task } from '../src/model.ts';
 test('running task sync asks for a bound current snapshot without fabricated history',()=>{
   for(const text of ['本会话 Hook','report_progress','当前快照','不补造历史','不要猜会话 ID/token','中断任务'])assert.ok(runningTaskSyncPrompt.includes(text));
 });
@@ -90,6 +90,46 @@ test('hook-only placeholders stay hidden but plans and real progress remain visi
   assert.deepEqual(visibleTasks(tasks,'all').map(task=>task.id),['plan','progress']);
   assert.equal(taskTitle(tasks[1]),'已同步计划');
   assert.equal(taskTitle(tasks[2]),'Reported');
+});
+test('matrix counts and filters use the same mutually exclusive business categories',()=>{
+  const base={title:'',plan:[],blockers:[],evidence:[]} as unknown as Task;
+  const tasks=[
+    {...base,id:'hook',status:'unreported'},
+    {...base,id:'plan',status:'unreported',plan:[{id:'s'}]},
+    {...base,id:'running',status:'running'},
+    {...base,id:'blocked',status:'running',blockers:[{open:true},{open:true}]},
+    {...base,id:'waiting',status:'waiting'},
+    {...base,id:'waiting-blocked',status:'waiting',blockers:[{open:true}]},
+    {...base,id:'done',status:'completed',archived:true},
+    {...base,id:'cancelled',status:'cancelled',blockers:[{open:true}]},
+  ] as Task[];
+  assert.equal(summaryTone(tasks[3]),'blocked');
+  assert.equal(summaryTone(tasks[5]),'blocked');
+  assert.equal(summaryTone(tasks[7]),'cancelled');
+  assert.deepEqual(taskCounts(tasks),{running:1,blocked:2,waiting:1,done:1,unreported:1,cancelled:1,total:7,blockers:4});
+  assert.deepEqual(filterTasks(tasks).map(task=>task.id),['plan','running','blocked','waiting','waiting-blocked']);
+  assert.deepEqual(filterTasks(tasks,'active','',true).map(task=>task.id),['plan','running','blocked','waiting','waiting-blocked','done']);
+  assert.deepEqual(filterTasks(tasks,'running').map(task=>task.id),['running']);
+  assert.deepEqual(filterTasks(tasks,'blocked').map(task=>task.id),['blocked','waiting-blocked']);
+  assert.deepEqual(filterTasks(tasks,'waiting','',true).map(task=>task.id),['waiting']);
+  assert.deepEqual(filterTasks(tasks,'unreported').map(task=>task.id),['plan']);
+  assert.deepEqual(filterTasks(tasks,'completed').map(task=>task.id),['done']);
+  assert.equal(filterTasks(tasks,'all').length,7);
+});
+test('matrix search matches context and evidence with all query terms without changing totals',()=>{
+  const task={id:'live',source_task_id:'source',title:'Release API',cwd:'D:/Project/Board',session_id:'session-alpha',host_id:'workstation',current_step:'Validating',status:'waiting',plan:[{title:'Compile'}],blockers:[{title:'Network approval',reason:'Firewall',owner:'Operations',open:true}],evidence:[{label:'Result',reference:'https://example.test/report'}]} as Task;
+  assert.equal(matchesTask(task,' API   board '),true);
+  for(const term of ['SOURCE','session-alpha','workstation','validating','compile','network','firewall','operations','example.test/report'])assert.equal(matchesTask(task,term),true);
+  assert.equal(matchesTask(task,'API absent'),false);
+  assert.equal(filterTasks([task],'blocked','approval api').length,1);
+  assert.equal(filterTasks([task],'waiting','approval api').length,0);
+  assert.equal(taskCounts([task]).blocked,1);
+});
+test('partial timer elapsed remains cumulative across paused intervals',()=>{
+  assert.equal(defaults.theme,'dark');
+  assert.equal(elapsed({started_at:10,ended_at:200,seconds:25,since:null,partial:true},1000),'已记录 25 秒');
+  assert.equal(elapsed({started_at:null,ended_at:200,seconds:25,since:null,partial:true},1000),'已记录 25 秒');
+  assert.equal(elapsed({started_at:null,ended_at:200,seconds:0,since:null,partial:true},1000),'起点未记录');
 });
 test('historical hooks and local config do not imply a verified current connection',()=>{
   for(const state of ['ready','partial','awaiting_reload','awaiting_session','session_received','error']){

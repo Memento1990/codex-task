@@ -1,14 +1,15 @@
 export type Timer = { started_at: number | null; ended_at: number | null; seconds: number; since: number | null; partial: boolean } | null;
 export type Step = { id: string; title: string; status: string; note: string; timing?: Timer };
 export type Blocker = { id: string; title: string; open: boolean; reason: string; impact: string; owner: string; resolve_when: string; timing?: Timer };
-export type Task = { archived?:boolean; source_task_id?:string; id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: { label: string; reference: string }[]; timing?: Timer };
+export type Evidence = { id?:string; label: string; reference: string; at?:number|null; time_source?:'first_reported'|'unknown' };
+export type Task = { archived?:boolean; source_task_id?:string; id: string; session_id: string; host_id: string; cwd: string; title: string; status: string; runtime: string; updated_at: number; current_step: string; plan: Step[]; blockers: Blocker[]; evidence: Evidence[]; timing?: Timer; waiting_since?:number|null };
 export type DockSummaryMode = 'always'|'hover'|'never';
 export const dockSummaryMode = (options: {dock_summary_mode?:unknown;dock_hover_summary?:boolean}): DockSummaryMode => ['always','hover','never'].includes(String(options.dock_summary_mode)) ? options.dock_summary_mode as DockSummaryMode : options.dock_hover_summary === false ? 'never' : 'hover';
 export const dockSummaryVisible = (mode: DockSummaryMode, hovered: boolean): boolean => mode === 'always' || mode === 'hover' && hovered;
 export type Options = { dock_summary_mode?: DockSummaryMode; dock_hover_summary?: boolean; auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
 export type Notice = { task_id: string; title: string; lines: string[]; tab: number; sticky?: boolean };
 export const normalizeTab = (value: unknown): number => value === 1 || value === 2 ? value : 0;
-export const isReportedTask = (task: Task): boolean => task.status !== 'unreported' || task.plan.length > 0;
+export const isReportedTask = (task: Task): boolean => task.status !== 'unreported' || (task.plan?.length || 0) > 0;
 export const taskTitle = (task: Task): string => task.title || (task.plan.length ? '已同步计划' : '等待结构化汇报');
 export const isBlockerNotice = (notice: Notice): boolean => notice.tab === 1;
 export const dragThresholdReached = (x:number,y:number,nextX:number,nextY:number,buttons:number): boolean => (buttons & 1) === 1 && Math.hypot(nextX-x,nextY-y) >= 4;
@@ -50,7 +51,7 @@ export function connectionStatus(connection: Connection): string {
   if(['ready','configured','awaiting_reload','awaiting_session'].includes(connection.state))return connection.mcp_connected?'连接已确认 · 待会话':'配置完成 · 连接待确认';
   return ({missing:'尚未配置',recovery_required:'旧连接待恢复',conflict:'配置需要检查',partial:'配置需要检查',session_received:'会话事件已收到',sync_verified:'接入与同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
 }
-export type Snapshot = { collector?:{status:string;heartbeat_age:number|null;pid:number|null;version:string|null;start_error:string|null;data_root:string;guidance:string}; storage?: {status:'ok'|'error';message:string}; tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown };
+export type Snapshot = { collector?:{status:string;heartbeat_age:number|null;pid:number|null;version:string|null;start_error:string|null;data_root:string;guidance:string}; storage?: {status:'ok'|'error';message:string}; tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown; data_location?:DataLocation; restart_required?:boolean };
 export type DataLocation = { current: string; restart_required: boolean };
 export type UpdateSnapshot = {current_version:string;state:string;latest_version?:string|null;release_notes?:string|null;release_url?:string|null;downloaded_bytes:number;total_bytes?:number|null;error?:string|null;last_checked?:number|null;preferences:{auto_check:boolean;auto_download:boolean};supported:boolean;installation_result?:{status?:string;version?:string;message?:string}|null};
 export function updatePresentation(update:UpdateSnapshot):{title:string;description:string;action:'check'|'download'|'install'|null;button:string} {
@@ -95,18 +96,54 @@ export function diagnosticText(value: unknown): string {
   if (Array.isArray(value)) return value.map(diagnosticText).filter(Boolean).join('\n');
   return JSON.stringify(value, null, 2);
 }
-export const defaults: Options = { dock_summary_mode: 'hover', dock_hover_summary: true, auto_start: false, show_taskbar: false, theme: 'light', notifications: true, notification_seconds: 3 };
+export const defaults: Options = { dock_summary_mode: 'hover', dock_hover_summary: true, auto_start: false, show_taskbar: false, theme: 'dark', notifications: true, notification_seconds: 3 };
 export const status: Record<string,string> = { running: '执行中', blocked: '有卡点', waiting: '待确认', completed: '已完成', cancelled: '已取消', unreported: '未汇报', pending: '待执行', inProgress: '进行中' };
 export const runtime: Record<string,string> = { active: '运行中', idle: '本轮结束', interrupted: '已中断', waiting_approval: '等待审批', unknown: '未知' };
 export const openBlockers = (task: Task) => task.blockers.filter(item => item.open);
 export const done = (task: Task) => task.plan.filter(item => item.status === 'completed').length;
+export type TaskTone = 'running'|'blocked'|'waiting'|'done'|'unknown'|'cancelled';
+export function summaryTone(task: Task): TaskTone {
+  if (task.status === 'completed') return 'done';
+  if (task.status === 'cancelled') return 'cancelled';
+  if (task.status === 'unreported') return 'unknown';
+  if (openBlockers(task).length) return 'blocked';
+  return task.status === 'waiting' ? 'waiting' : 'running';
+}
+export function taskCounts(tasks: Task[]) {
+  const counts = {running:0,blocked:0,waiting:0,done:0,unreported:0,cancelled:0,total:0,blockers:0};
+  for (const task of tasks.filter(isReportedTask)) {
+    const tone = summaryTone(task);
+    counts[tone === 'unknown' ? 'unreported' : tone]++;
+    counts.total++;
+    counts.blockers += openBlockers(task).length;
+  }
+  return counts;
+}
+export function matchesTask(task: Task, query: string): boolean {
+  const terms = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const text = [task.id,task.source_task_id,task.title,task.cwd,task.session_id,task.host_id,task.current_step,
+    ...(task.plan || []).map(item=>item.title),
+    ...(task.blockers || []).flatMap(item=>[item.title,item.reason,item.owner]),
+    ...(task.evidence || []).flatMap(item=>[item.label,item.reference])].join('\n').toLocaleLowerCase();
+  return terms.every(term=>text.includes(term));
+}
+export function filterTasks(tasks: Task[], filter = 'active', query = '', showDone = false): Task[] {
+  return tasks.filter(task => {
+    if (!isReportedTask(task) || !matchesTask(task,query)) return false;
+    const tone = summaryTone(task);
+    if (filter === 'all') return true;
+    if (filter === 'active') return !['done','cancelled'].includes(tone) || showDone && tone === 'done';
+    return tone === ({completed:'done',unreported:'unknown'} as Record<string,string>)[filter] || tone === filter;
+  });
+}
 export function elapsed(timer: Timer | undefined, now: number): string {
   if (!timer) return '起点未记录';
-  if (timer.started_at === null) return timer.partial ? '起点未记录' : '未开始';
+  if (timer.started_at === null && timer.seconds <= 0 && timer.since === null) return timer.partial ? '起点未记录' : '未开始';
   const seconds = Math.max(0, Math.floor(timer.seconds + (timer.since === null ? 0 : now - timer.since)));
   const d = Math.floor(seconds / 86400), h = Math.floor(seconds / 3600) % 24, m = Math.floor(seconds / 60) % 60, s = seconds % 60;
   const value = d ? `${d} 天${h ? ` ${h} 小时` : ''}` : h ? `${h} 小时${m ? ` ${m} 分` : ''}` : m ? `${m} 分${s ? ` ${s} 秒` : ''}` : `${s} 秒`;
-  return (timer.partial ? '已记录 ' : '') + value;
+  return (timer.partial || timer.started_at === null ? '已记录 ' : '') + value;
 }
 export function dockSummary(tasks: Task[], selected: string) {
   const reported = tasks.filter(task => !task.archived && isReportedTask(task));
@@ -121,7 +158,7 @@ export function dockSummary(tasks: Task[], selected: string) {
     step:task?.current_step || task?.plan.find(step => step.status === 'inProgress')?.title || (total ? '等待下一步进展' : '暂无可计算进度')};
 }
 export function visibleTasks(tasks: Task[], filter: string): Task[] {
-  return tasks.filter(task => isReportedTask(task) && task.status !== 'completed' && (filter === 'all' || filter === 'blocked' && openBlockers(task).length > 0 || filter === 'running' && task.status === 'running'));
+  return filterTasks(tasks,filter === 'all' ? 'active' : filter);
 }
 export function safeReference(value: string): boolean {
   if (/^(?:[A-Z]:[\\/])[^\r\n]+\.(?:md|txt|json|log|csv|png|jpe?g|webp|pdf|html)$/i.test(value)) return true;

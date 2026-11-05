@@ -110,6 +110,10 @@ fn save_completion(db:&Connection,task:&mut Value)->Result<()> {
     db.execute("insert into completed_tasks(id,source_task_id,revision,payload) values(?1,?2,?3,?4) on conflict(id) do update set revision=excluded.revision,payload=excluded.payload",params![archive,source,revision,snapshot.to_string()]).map_err(|_|"完成记录保存失败")?;
     Ok(())
 }
+fn archived_projection(task:&mut Value){
+    if task.get("waiting_since").is_none(){task["waiting_since"]=Value::Null;}
+    if let Some(items)=task["evidence"].as_array_mut(){for item in items{if item.get("at").is_none(){item["at"]=Value::Null;item["time_source"]=json!("unknown");}}}
+}
 fn migrate_retention(db:&Connection)->Result<()> {
     db.execute_batch("create table if not exists completed_tasks(id text primary key,source_task_id text not null,revision integer not null,payload text not null); create table if not exists store_migrations(name text primary key);").map_err(|_|"任务保留表初始化失败")?;
     let tx=rusqlite::Transaction::new_unchecked(db,rusqlite::TransactionBehavior::Immediate).map_err(|_|"任务保留迁移失败")?;
@@ -182,7 +186,7 @@ impl Store {
             self.timings.attach(&mut task);tasks.push(task);}
         // Old readonly databases intentionally do not run schema migration.
         let has_archive:bool=self.db.query_row("select exists(select 1 from sqlite_master where type='table' and name='completed_tasks')",[],|r|r.get(0)).map_err(|_|"完成记录读取失败")?;
-        if has_archive{let mut statement=self.db.prepare("select id,payload from completed_tasks").map_err(|_|"完成记录读取失败")?;let rows=statement.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(|_|"完成记录读取失败")?;for row in rows{let(id,raw)=row.map_err(|_|"完成记录读取失败")?;if current_completions.contains(&id){continue;}let mut archive:Value=serde_json::from_str(&raw).map_err(|_|"完成记录损坏")?;archive.as_object_mut().ok_or("完成记录损坏")?.remove("history");tasks.push(archive);}}
+        if has_archive{let mut statement=self.db.prepare("select id,payload from completed_tasks").map_err(|_|"完成记录读取失败")?;let rows=statement.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(|_|"完成记录读取失败")?;for row in rows{let(id,raw)=row.map_err(|_|"完成记录读取失败")?;if current_completions.contains(&id){continue;}let mut archive:Value=serde_json::from_str(&raw).map_err(|_|"完成记录损坏")?;archive.as_object_mut().ok_or("完成记录损坏")?.remove("history");archived_projection(&mut archive);tasks.push(archive);}}
         tasks.sort_by(|a,b|b["updated_at"].as_f64().unwrap_or(0.).total_cmp(&a["updated_at"].as_f64().unwrap_or(0.)));Ok(tasks)
     }
     pub fn revision(&self,session:&str,host:&str)->i64{self.db.query_row("select payload from tasks where id=?1",[format!("{host}:{session}")],|r|r.get::<_,String>(0)).ok().and_then(|s|serde_json::from_str::<Value>(&s).ok()).and_then(|v|v["revision"].as_i64()).unwrap_or(-1)}

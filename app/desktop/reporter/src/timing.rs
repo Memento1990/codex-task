@@ -13,8 +13,10 @@ impl Timer{
         if finished&&self.started_at.is_none()&&self.ended_at.is_none(){self.partial=true;self.ended_at=Some(at);}
     }
 }
-struct State{revision:i64,title:String,status:String,last_at:f64,plan_at:f64,timing:Timer,steps:HashMap<String,Timer>,blockers:HashMap<String,Timer>}
-impl Default for State{fn default()->Self{Self{revision:-1,title:String::new(),status:"unreported".into(),last_at:0.,plan_at:0.,timing:Timer::default(),steps:HashMap::new(),blockers:HashMap::new()}}}
+struct EvidenceStamp{id:String,at:f64}
+fn evidence_key(item:&Value)->String{json!([item["label"],item["reference"]]).to_string()}
+struct State{revision:i64,episode:i64,title:String,status:String,last_at:f64,plan_at:f64,timing:Timer,steps:HashMap<String,Timer>,blockers:HashMap<String,Timer>,evidence:HashMap<String,EvidenceStamp>,waiting_since:Option<f64>}
+impl Default for State{fn default()->Self{Self{revision:-1,episode:-1,title:String::new(),status:"unreported".into(),last_at:0.,plan_at:0.,timing:Timer::default(),steps:HashMap::new(),blockers:HashMap::new(),evidence:HashMap::new(),waiting_since:None}}}
 #[derive(Default)]
 pub struct TimingIndex{cursor:i64,states:HashMap<String,State>}
 impl TimingIndex{
@@ -25,15 +27,20 @@ impl TimingIndex{
         for row in rows{
             let (id,kind,at,raw)=row.map_err(|_|"计时记录读取失败")?;let event:Value=serde_json::from_str(&raw).map_err(|_|"计时记录格式无效")?;
             if event["agent_id"].as_str().is_some_and(|s|!s.is_empty()){continue;}
-            let state=self.states.entry(id).or_default();
+            let state=self.states.entry(id.clone()).or_default();let previous_status=state.status.clone();
             let report=if kind=="progress"{
                 let report=&event["report"];let revision=report["revision"].as_i64().ok_or("计时修订无效")?;
                 if revision<=state.revision{continue;}
                 let status=report["status"].as_str().unwrap_or("unreported");let title=report["title"].as_str().unwrap_or("");
+                if state.revision<0||["completed","cancelled"].contains(&state.status.as_str())&&!["completed","cancelled"].contains(&status){state.episode=revision;state.evidence.clear();}
                 if ["completed","cancelled"].contains(&state.status.as_str())&&!["completed","cancelled"].contains(&status)&&title!=state.title{state.timing=Timer::default();state.steps.clear();state.blockers.clear();}
                 state.revision=revision;state.title=title.into();state.status=status.into();report.clone()
             }else{if state.revision>=0||at<state.plan_at{continue;}state.plan_at=at;json!({"status":"running","plan":event["plan"],"blockers":[]})};
             let at=at.max(state.last_at);state.last_at=at;let terminal=["completed","cancelled"].contains(&report["status"].as_str().unwrap_or(""));state.timing.advance(!terminal,at,terminal);
+            if kind=="progress"{
+                state.waiting_since=if state.status=="waiting"{if previous_status=="waiting"{state.waiting_since}else{Some(at)}}else{None};
+                if let Some(items)=report["evidence"].as_array(){for item in items{let key=evidence_key(item);state.evidence.entry(key.clone()).or_insert_with(||EvidenceStamp{id:format!("evidence:{}",crate::store::hash(json!([id,state.episode,key]).to_string().as_bytes())),at});}}
+            }
             for (key,timers) in [("plan",&mut state.steps),("blockers",&mut state.blockers)]{
                 let mut present=HashSet::new();
                 if let Some(items)=report[key].as_array(){for item in items{let id=item["id"].as_str().unwrap_or("").to_owned();present.insert(id.clone());let active=if key=="blockers"{item["open"]==true}else{["inProgress","blocked"].contains(&item["status"].as_str().unwrap_or(""))};let finished=if key=="blockers"{item["open"]==false}else{item["status"]=="completed"};timers.entry(id).or_default().advance(active&&!terminal,at,finished);}}
@@ -43,6 +50,11 @@ impl TimingIndex{
     }
     pub fn attach(&self,task:&mut Value){
         let state=self.states.get(task["id"].as_str().unwrap_or(""));task["timing"]=state.map(|s|json!(s.timing)).unwrap_or(Value::Null);
+        task["waiting_since"]=state.and_then(|s|s.waiting_since).map(|at|json!(at)).unwrap_or(Value::Null);
+        if let Some(items)=task["evidence"].as_array_mut(){for item in items{
+            if let Some(stamp)=state.and_then(|s|s.evidence.get(&evidence_key(item))){item["id"]=json!(stamp.id);item["at"]=json!(stamp.at);item["time_source"]=json!("first_reported");}
+            else{item["at"]=Value::Null;item["time_source"]=json!("unknown");}
+        }}
         for key in ["plan","blockers"]{if let Some(items)=task[key].as_array_mut(){for item in items{item["timing"]=state.and_then(|s|if key=="plan"{&s.steps}else{&s.blockers}.get(item["id"].as_str().unwrap_or(""))).map(|t|json!(t)).unwrap_or(Value::Null);}}}
     }
 }

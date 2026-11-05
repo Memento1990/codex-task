@@ -1,0 +1,58 @@
+{
+  "results": [
+    {
+      "name": "a light theme renders",
+      "pass": true
+    },
+    {
+      "name": "a narrow remains contained after CSS cleanup",
+      "pass": true
+    },
+    {
+      "name": "a conflict offers diagnostics without recovery overwrite",
+      "pass": true
+    },
+    {
+      "name": "a owned old connection has recovery preview",
+      "pass": true
+    },
+    {
+      "name": "b light theme renders",
+      "pass": true
+    },
+    {
+      "name": "b narrow remains contained after CSS cleanup",
+      "pass": true
+    },
+    {
+      "name": "b conflict offers diagnostics without recovery overwrite",
+      "pass": true
+    },
+    {
+      "name": "b owned old connection has recovery preview",
+      "pass": true
+    },
+    {
+      "name": "c light theme renders",
+      "pass": true
+    },
+    {
+      "name": "c narrow remains contained after CSS cleanup",
+      "pass": true
+    },
+    {
+      "name": "c conflict offers diagnostics without recovery overwrite",
+      "pass": true
+    },
+    {
+      "name": "c owned old connection has recovery preview",
+      "pass": true
+    },
+    {
+      "name": "C blocker marker opens correct detail and keyboard focus",
+      "pass": true
+    }
+  ],
+  "passed": 13,
+  "total": 13
+}

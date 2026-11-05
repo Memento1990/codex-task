@@ -2,7 +2,7 @@ use std::{collections::HashMap,path::{Path,PathBuf}};
 use serde_json::{json,Value};
 use crate::{Result,now,store::{Store,read_json,atomic_json},integration};
 
-pub fn defaults()->Value{json!({"auto_start":false,"show_taskbar":false,"theme":"light","notifications":true,"notification_seconds":3,"dock_hover_summary":true,"dock_summary_mode":"hover","startup_command":""})}
+pub fn defaults()->Value{json!({"auto_start":false,"show_taskbar":false,"theme":"dark","notifications":true,"notification_seconds":3,"dock_hover_summary":true,"dock_summary_mode":"hover","startup_command":""})}
 pub fn validate_options(value:&Value)->Result<Value>{
     if !value.is_object(){return Err("设置格式无效".into());}let mut out=defaults();for key in ["auto_start","show_taskbar","theme","notifications","notification_seconds","dock_hover_summary","dock_summary_mode"]{if let Some(value)=value.get(key){out[key]=value.clone();}}
     if ["auto_start","show_taskbar","notifications","dock_hover_summary"].iter().any(|k|!out[k].is_boolean()){return Err("开关设置无效".into());}
@@ -10,9 +10,16 @@ pub fn validate_options(value:&Value)->Result<Value>{
     if ![Some("always"),Some("hover"),Some("never")].contains(&out["dock_summary_mode"].as_str()){return Err("任务摘要显示模式无效".into());}
     out["dock_hover_summary"]=json!(out["dock_summary_mode"]!="never");
     if ![Some("light"),Some("dark")].contains(&out["theme"].as_str()){return Err("主题设置无效".into());}
-    if !out["notification_seconds"].as_u64().is_some_and(|n|(1..=30).contains(&n)){return Err("通知停留时间须为 1–30 秒".into());}Ok(out)
+    if !out["notification_seconds"].as_u64().is_some_and(|n|(1..=60).contains(&n)){return Err("通知停留时间须为 1–60 秒".into());}Ok(out)
 }
 pub fn load_options(root:&Path)->Value{read_json(&root.join("preferences.json")).ok().and_then(|raw|validate_options(&raw).ok().map(|mut valid|{valid["startup_command"]=raw.get("startup_command").cloned().unwrap_or(json!(""));valid})).unwrap_or_else(defaults)}
+pub fn merge_options(previous:&Value,patch:&Value)->Result<Value>{
+    if !patch.is_object(){return Err("设置格式无效".into());}
+    let mut merged=previous.clone();
+    for key in ["auto_start","show_taskbar","theme","notifications","notification_seconds","dock_hover_summary","dock_summary_mode"]{if let Some(value)=patch.get(key){merged[key]=value.clone();}}
+    if patch.get("dock_summary_mode").is_none()&&patch.get("dock_hover_summary").is_some(){merged["dock_summary_mode"]=json!(if merged["dock_hover_summary"]==false{"never"}else{"hover"});}
+    let mut out=validate_options(&merged)?;out["startup_command"]=previous.get("startup_command").cloned().unwrap_or(json!(""));Ok(out)
+}
 const RUN_KEY:&str=r"Software\Microsoft\Windows\CurrentVersion\Run";
 fn startup(enabled:bool,desired:&str,owned:&str)->Result<Option<String>>{
     startup_at(RUN_KEY,enabled,desired,owned)
@@ -27,6 +34,57 @@ fn startup_at(key_path:&str,enabled:bool,desired:&str,owned:&str)->Result<Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct TempRoot(PathBuf);
+    impl TempRoot{fn new()->Self{let path=std::env::temp_dir().join(format!("floatboard-options-{}",uuid::Uuid::new_v4().simple()));std::fs::create_dir_all(&path).unwrap();Self(path)}}
+    impl Drop for TempRoot{fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}}
+    #[test]
+    fn preference_patches_merge_latest_values_and_preserve_saved_light_theme(){
+        let temp=TempRoot::new();let gui=temp.0.join("CodexFloatboard.exe");
+        assert_eq!(load_options(&temp.0)["theme"],"dark");
+        atomic_json(&temp.0.join("preferences.json"),&json!({"theme":"light","notifications":false,"notification_seconds":60,"dock_summary_mode":"always"})).unwrap();
+        let mut engine=Engine::new(temp.0.clone(),gui);
+        let saved=engine.call("preferences",json!({"show_taskbar":true})).unwrap();
+        assert_eq!(saved["theme"],"light");assert_eq!(saved["notifications"],false);assert_eq!(saved["notification_seconds"],60);assert_eq!(saved["dock_summary_mode"],"always");
+        let saved=engine.call("preferences",json!({"notification_seconds":45})).unwrap();
+        assert_eq!(saved["show_taskbar"],true);assert_eq!(saved["theme"],"light");assert_eq!(saved["notifications"],false);
+        let before=std::fs::read(temp.0.join("preferences.json")).unwrap();
+        assert!(engine.call("preferences",json!({"notification_seconds":61})).is_err());
+        assert_eq!(std::fs::read(temp.0.join("preferences.json")).unwrap(),before);
+    }
+    #[test]
+    fn preference_patch_respects_legacy_summary_and_internal_startup_ownership(){
+        let mut previous=defaults();previous["dock_summary_mode"]=json!("always");previous["startup_command"]=json!("owned.exe");
+        let saved=merge_options(&previous,&json!({"theme":"light","startup_command":"unowned.exe"})).unwrap();
+        assert_eq!(saved["dock_summary_mode"],"always");assert_eq!(saved["startup_command"],"owned.exe");
+        assert_eq!(merge_options(&previous,&json!({"dock_hover_summary":false})).unwrap()["dock_summary_mode"],"never");
+        assert_eq!(merge_options(&previous,&json!({"dock_summary_mode":"always","dock_hover_summary":false})).unwrap()["dock_hover_summary"],true);
+        assert!(merge_options(&previous,&json!({"dock_hover_summary":"false"})).is_err());
+    }
+    #[test]
+    fn startup_failure_does_not_commit_preferences(){
+        let temp=TempRoot::new();let previous=defaults();atomic_json(&temp.0.join("preferences.json"),&previous).unwrap();
+        let error=save_options_with_startup(&temp.0,&temp.0.join("gui.exe"),&json!({"auto_start":true}),false,|_,_,_|Err("fixture startup failure".into())).unwrap_err();
+        assert!(error.contains("fixture startup failure"));assert_eq!(load_options(&temp.0),previous);
+    }
+    #[test]
+    fn preference_write_failure_rolls_back_startup_and_reports_failed_rollback(){
+        for fail_rollback in [false,true]{
+            let temp=TempRoot::new();std::fs::create_dir(temp.0.join("preferences.json")).unwrap();let mut calls=Vec::new();
+            let error=save_options_with_startup(&temp.0,&temp.0.join("gui.exe"),&json!({"auto_start":true}),false,|enabled,desired,owned|{
+                calls.push((enabled,desired.to_owned(),owned.to_owned()));
+                if fail_rollback&&calls.len()==2{Err("fixture rollback failure".into())}else{Ok(None)}
+            }).unwrap_err();
+            assert_eq!(calls.len(),2);assert!(calls[0].0);assert!(!calls[1].0);assert_eq!(calls[1].2,calls[0].1);
+            assert_eq!(error.contains("开机启动恢复失败"),fail_rollback);assert!(temp.0.join("preferences.json").is_dir());
+        }
+    }
+    #[test]
+    fn isolated_preferences_never_attempt_startup(){
+        let temp=TempRoot::new();let gui=temp.0.join("gui.exe");
+        assert!(save_options_with_startup(&temp.0,&gui,&json!({"auto_start":true}),true,|_,_,_|panic!("must not write startup")).is_err());
+        let saved=save_options_with_startup(&temp.0,&gui,&json!({"theme":"light","notification_seconds":60}),true,|_,_,_|panic!("must not write startup")).unwrap();
+        assert_eq!(saved["theme"],"light");assert_eq!(saved["notification_seconds"],60);assert_eq!(saved["startup_command"],"");
+    }
     #[test]
     fn startup_ownership_roundtrip_in_isolated_registry_key(){
         let path=format!(r"Software\CodexFloatboardTests\{}",uuid::Uuid::new_v4().simple());
@@ -75,14 +133,20 @@ mod tests {
     }
 }
 pub fn save_options(root:&Path,gui:&Path,value:&Value)->Result<Value>{
-    if std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1") || std::env::args().any(|arg|arg=="--isolated-instance"){
-        let mut out=validate_options(value)?;if out["auto_start"]==true{return Err("隔离开发/测试实例不能设置系统开机启动".into());}out["startup_command"]=json!("");atomic_json(&root.join("preferences.json"),&out)?;return Ok(out);
-    }
-    let previous=load_options(root);let mut out=validate_options(value)?;let desired=integration::command_line(&[crate::update_install::launch_entry(gui).to_string_lossy().into_owned(),"--data-dir".into(),root.to_string_lossy().into_owned()]);
+    let isolated=std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1") || std::env::args().any(|arg|arg=="--isolated-instance");
+    save_options_with_startup(root,gui,value,isolated,startup)
+}
+fn save_options_with_startup(root:&Path,gui:&Path,value:&Value,isolated:bool,mut update_startup:impl FnMut(bool,&str,&str)->Result<Option<String>>)->Result<Value>{
+    let previous=load_options(root);let mut out=merge_options(&previous,value)?;
+    if isolated{if out["auto_start"]==true{return Err("隔离开发/测试实例不能设置系统开机启动".into());}out["startup_command"]=json!("");atomic_json(&root.join("preferences.json"),&out)?;return Ok(out);}
+    let desired=integration::command_line(&[crate::update_install::launch_entry(gui).to_string_lossy().into_owned(),"--data-dir".into(),root.to_string_lossy().into_owned()]);
     let changed=out["auto_start"]!=previous["auto_start"]||out["auto_start"]==true&&previous["startup_command"]!=desired;
-    let old=if changed{startup(out["auto_start"]==true,&desired,previous["startup_command"].as_str().unwrap_or(""))?}else{None};
+    let old=if changed{update_startup(out["auto_start"]==true,&desired,previous["startup_command"].as_str().unwrap_or(""))?}else{None};
     out["startup_command"]=json!(if out["auto_start"]==true{desired.clone()}else{String::new()});
-    if let Err(error)=atomic_json(&root.join("preferences.json"),&out){if changed{let _=startup(old.is_some(),old.as_deref().unwrap_or(&desired),&desired);}return Err(error);}Ok(out)
+    if let Err(error)=atomic_json(&root.join("preferences.json"),&out){
+        if changed{if let Err(rollback)=update_startup(old.is_some(),old.as_deref().unwrap_or(&desired),&desired){return Err(format!("{error}；开机启动恢复失败：{rollback}"));}}
+        return Err(error);
+    }Ok(out)
 }
 fn label(status:&str)->&str{match status{"running"=>"进行中","blocked"=>"有卡点","waiting"=>"待确认","completed"=>"已完成","cancelled"=>"已取消",_=>"未汇报"}}
 fn step_label(status:&str)->&str{match status{"inProgress"=>"进行中","blocked"=>"受阻","completed"=>"已完成",_=>"待执行"}}

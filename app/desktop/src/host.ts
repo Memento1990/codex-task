@@ -7,4 +7,4 @@ export const action = (name: string, value: unknown = null) => invoke('host_acti
 export const onHost = (handler: (value: Record<string, unknown>) => void) => listen<Record<string, unknown>>('host-event', event => handler(event.payload));
 export const sendHost = (value: Record<string, unknown>) => emit('host-event', value);
 export const snapshot = () => call<Snapshot>('snapshot');
-export const saveOptions = (value: Options) => call<Options>('preferences', value as unknown as Record<string,unknown>);
+export const saveOptions = (value: Partial<Options>) => call<Options>('preferences', value as Record<string,unknown>);

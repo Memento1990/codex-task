@@ -16,7 +16,7 @@
   let snapshot = $state<NotificationSnapshot | null>(null);
   let weixinBusy = $state(false);
   let pending = $state(false), error = $state(''), feedback = $state('');
-  let tab = $state<'channels' | 'records'>('channels'), failedOnly = $state(false);
+  let wechatOpen=$state(false), failedOnly = $state(false);
   let editing = $state<NotificationChannelId | null>(null);
   let webhook = $state(''), keyword = $state(''), signingSecret = $state('');
   let channelEnabled = $state(true), clearSigningSecret = $state(false);
@@ -99,70 +99,48 @@
 
 {#if visible}
 <section class="notifications" aria-label="消息通知" aria-busy={pending}>
-  <div class="overview">
-    <div><strong>重要进展，不必守在屏幕前。</strong><p>集中管理外部渠道与事件。桌面浮窗保持独立。</p></div>
-    <label class="master"><input type="checkbox" checked={snapshot?.enabled ?? false} disabled={locked} onchange={event => { const checked = event.currentTarget.checked; event.currentTarget.checked = snapshot?.enabled ?? false; saveGlobal(checked); }}>外部通知</label>
-  </div>
-  {#if !native}
-    <p class="notice" role="status">当前为非桌面环境，通知不可使用。请在桌面应用中配置；这里不会模拟连接或投递。</p>
-  {:else if !snapshot && !error}<p class="hint" role="status">正在读取通知设置…</p>{/if}
-  {#if snapshot && !snapshot.enabled}<p class="notice">外部通知已暂停。桌面浮窗不受影响；重新启用后不会补发暂停期间的事件。</p>{/if}
-  <div class="tabs" role="group" aria-label="通知视图">
-    <button type="button" class:active={tab === 'channels'} aria-pressed={tab === 'channels'} disabled={weixinBusy||pending} onclick={() => { tab = 'channels'; confirmation = null; }}>渠道与订阅</button>
-    <button type="button" class:active={tab === 'records'} aria-pressed={tab === 'records'} disabled={weixinBusy||pending} onclick={() => { tab = 'records'; confirmation = null; }}>发送记录{snapshot ? ` · ${snapshot.records.length}` : ''}</button>
-    <button type="button" class="refresh" disabled={!native || pending || weixinBusy || blocked} onclick={() => request('notification_snapshot', {}, '通知状态已刷新')}>刷新</button>
-  </div>
+  <label class="master"><span>外部通知</span><input type="checkbox" checked={snapshot?.enabled??false} disabled={locked} onchange={event=>{const checked=event.currentTarget.checked;event.currentTarget.checked=snapshot?.enabled??false;saveGlobal(checked);}}></label>
+  {#if !native}<p class="notice" role="status">请从桌面应用打开，当前不会模拟连接或投递。</p>{:else if !snapshot&&!error}<p class="hint" role="status">正在读取通知设置…</p>{/if}
   {#if error}<p class="notice" role="alert">{error}</p>{/if}
-  {#if snapshot?.service_error}<p class="notice" role="alert">本地通知服务异常，可能无法投递。请检查本地服务状态后刷新；此处不显示原始错误或凭据。</p>{/if}
+  {#if snapshot?.service_error}<p class="notice" role="alert">通知服务异常，请检查连接后刷新。</p>{/if}
   {#if feedback}<p class="feedback" role="status">{feedback}</p>{/if}
-  {#if tab === 'channels'}
-    <div class="section-title"><h2>通知渠道</h2><span>可同时启用多个渠道</span></div>
-    <div class="channels">
-      {#each (['wechat', 'wecom', 'feishu'] as NotificationChannelId[]) as id}
-        {@const channel = snapshot?.channels.find(item => item.id === id)}
-        <article class="channel">
-          <div class="channel-top"><span class="glyph" aria-hidden="true">{id === 'wechat' ? '微' : id === 'wecom' ? '企' : '飞'}</span><h3>{notificationChannelNames[id]}</h3></div>
-          <p class="hint">{id === 'wechat' ? '个人微信 · 扫码绑定' : '群机器人 · Webhook'}</p>
-          <p class="channel-state">{channel ? notificationChannelState(channel) : '状态未读取'}</p>
-          {#if id === 'wechat'}<p class="hint">绑定扫码账号，将已订阅的任务变化发送到微信。</p>
-          {:else}<div class="actions"><button type="button" disabled={locked || !channel || !!editing} onclick={() => channel && editChannel(channel)}>{channel?.configured ? '管理配置' : '配置 Webhook'}</button><button type="button" disabled={locked || !channel?.configured || !channel.enabled || !snapshot?.enabled} onclick={() => ask('test', id)}>发送测试</button></div>{/if}
-        </article>
-      {/each}
-    </div>
-    <section class="editor" aria-label="个人微信配置"><div class="section-title"><h2>微信 · 连接与日常通知</h2></div><WeixinChannel snapshot={snapshot?.weixin} enabled={snapshot?.channels.find(c=>c.id==='wechat')?.enabled ?? false} blocked={blocked||pending} onbusychange={value=>weixinBusy=value} onupdate={value=>{++revision;snapshot=value;}}/></section>
+  <section class="notification-section"><h2>通知渠道</h2>
+    {#each (['wechat','wecom','feishu'] as NotificationChannelId[]) as id}
+      {@const channel=snapshot?.channels.find(c=>c.id===id)}
+      <div class="channel-row"><div class="channel-label"><strong>{notificationChannelNames[id]}</strong><small>{channel?notificationChannelState(channel):'状态未读取'}</small></div>
+        <input type="checkbox" aria-label={`启用${notificationChannelNames[id]}`} checked={channel?.enabled??false} disabled={locked||!channel?.configured} onchange={event=>{const checked=event.currentTarget.checked;event.currentTarget.checked=channel?.enabled??false;void request('notification_channel_save',{id,enabled:checked,keyword:channel?.keyword||''});}}>
+        <button disabled={locked||!channel} onclick={()=>{confirmation=null;if(id==='wechat'){wechatOpen=!wechatOpen;clearEditor();}else if(channel){wechatOpen=false;editChannel(channel);}}}>{id==='wechat'?'绑定 / 管理':'配置'}</button>
+        <button disabled={locked||!channel?.configured||!channel.enabled||!snapshot?.enabled} onclick={()=>ask('test',id)}>测试</button>
+      </div>
+    {/each}
+    {#if wechatOpen}<section class="editor" aria-label="个人微信配置"><div class="section-title"><h2>微信 · 绑定 / 管理</h2><button disabled={weixinBusy} onclick={()=>wechatOpen=false}>关闭</button></div><WeixinChannel snapshot={snapshot?.weixin} enabled={snapshot?.channels.find(c=>c.id==='wechat')?.enabled??false} blocked={blocked||pending} onbusychange={value=>weixinBusy=value} onupdate={value=>{++revision;snapshot=value;}}/></section>{/if}
     {#if editing}
       <section class="editor" aria-label="渠道配置">
         <div class="section-title"><h2>{notificationChannelNames[editing]} · 连接配置</h2><button type="button" disabled={pending} onclick={() => { clearEditor(); confirmation = null; }}>取消编辑</button></div>
-        <p class="hint">凭据仅用于本机投递，不会回填或回显。空白表示保留已有凭据；更换 Webhook 不会自动清除签名密钥。取消编辑或关闭设置会丢弃未保存输入；切换发送记录会保留当前输入。</p>
+        <p class="hint">凭据留空保留已有值，不回显；保存不会发送测试。</p>
         <fieldset disabled={pending || blocked || !!confirmation}>
           <label class="check"><input type="checkbox" bind:checked={channelEnabled}>启用此渠道</label>
           <label class="field">Webhook 地址<input type="password" bind:value={webhook} autocomplete="new-password" spellcheck="false" placeholder={editedChannel?.configured ? '已有地址已保存；留空保留，输入新地址替换' : editing === 'wecom' ? 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…' : 'https://open.feishu.cn/open-apis/bot/v2/hook/…'}><small>仅接受对应平台的 HTTPS 机器人地址，不支持自定义代理或其他域名。</small></label>
           {#if webhook.trim() && !validNotificationWebhook(editing, webhook)}<p class="validation" role="alert">地址不符合所选平台要求。请检查域名和完整机器人路径。</p>{/if}
           <label class="field">安全关键词（选填）<input bind:value={keyword} maxlength="200" autocomplete="off" placeholder="平台要求的安全关键词"><small>将加入通知文本，请勿填写密钥。</small></label>
-          {#if editing === 'feishu'}
+          {#if editing === 'feishu'}<details class="advanced"><summary>高级配置 · 签名校验</summary>
             <label class="field">签名密钥（选填）<input type="password" bind:value={signingSecret} disabled={clearSigningSecret} autocomplete="new-password" spellcheck="false" placeholder={editedChannel?.has_signing_secret ? '已有密钥已保存；留空保留' : '如机器人启用了签名校验，请填写'}></label>
             <label class="check"><input type="checkbox" bind:checked={clearSigningSecret} onchange={() => { signingSecret = ''; }}>明确删除已保存的签名密钥</label>
-            <p class="hint">仅在平台也关闭签名校验时删除，否则后续投递会失败。</p>
+            <p class="hint">仅在平台也关闭签名校验时删除，否则后续投递会失败。</p></details>
           {/if}
           <div class="actions"><button type="button" class="primary" disabled={!canSaveChannel} onclick={() => ask('save')}>保存配置…</button>{#if editedChannel?.configured}<button type="button" onclick={() => ask('delete', editing!)}>删除配置…</button>{/if}</div>
         </fieldset>
       </section>
     {/if}
-    <section class="subscriptions"><div class="section-title"><h2>哪些事件需要通知？</h2><span>修改即时保存</span></div>
-      {#each notificationEvents as event}<label class="check event"><input type="checkbox" checked={snapshot?.subscriptions[event.id] ?? false} disabled={locked} onchange={change => { const checked = change.currentTarget.checked; change.currentTarget.checked = snapshot?.subscriptions[event.id] ?? false; saveGlobal(snapshot!.enabled, event.id, checked); }}><span><strong>{event.name}</strong><small>{event.detail}</small></span></label>{/each}
-      <p class="hint">所选事件发送至所有已启用且已配置的渠道。</p>
-    </section>
-    <section class="preview" aria-label="通知内容预览"><div class="section-title"><h2>通知预览</h2><label class="preview-select">事件<select bind:value={previewEvent}>{#each notificationEvents as event}<option value={event.id}>{event.name}</option>{/each}</select></label></div><div class="message"><strong>{preview.title}</strong><p>{preview.body}</p></div><p class="hint">示例内容，不会发送。实际通知按渠道格式呈现，包含所设安全关键词。</p></section>
-    <details class="policy"><summary>发送策略与隐私</summary><p>仅本地通知进程运行且网络可用时才可能送达。退出、休眠或断网会影响投递，请勿将它用于紧急告警。</p><p>默认不发送本地路径、代码或日志；任务标题由用户提供，本身可能含敏感信息，请在命名和选定接收群时留意。</p><p>已配置不代表测试通过；平台受理不代表对方已读。企微、飞书失败可能自动重试；微信结果未知不自动重发。手动重试也可能重复送达。</p></details>
-  {:else}
-    <div class="section-title records-heading"><h2>最近发送</h2><label class="check"><input type="checkbox" bind:checked={failedOnly}>仅看失败／未知</label><button type="button" disabled={locked || !snapshot?.records.length} onclick={() => ask('clear')}>清空记录…</button></div>
-    <p class="hint">异步投递中每 2 秒刷新。平台受理不代表已读；企微、飞书失败可能自动重试，微信状态未知不会自动重发。</p>
-    {#if !records.length}<div class="empty">{failedOnly ? '没有失败记录' : '还没有发送记录'}<p>{!native ? '请在桌面应用中使用真实通知。' : '配置并启用渠道后，可发送测试查看最终结果。'}</p></div>
-    {:else}<div class="records">{#each records as record (record.id)}
-      {@const state = notificationRecordState(record.status)}
-      <article class="record"><div class="record-head"><strong>{record.title || '通知'}</strong><span class="badge" class:success={state.tone === 'success'} class:warning={state.tone === 'warning'}>{state.label}</span></div><p class="hint">{notificationChannelNames[record.channel] ?? '通知渠道'} · {notificationEventName(record.event)} · 尝试 {record.attempts} 次</p><time class="hint">{notificationTime(record.created_at)}</time>{#if record.error}<p class="validation">{safeNotificationError(record.error)}</p>{/if}{#if record.status === 'failed'}<div class="actions"><button type="button" disabled={locked || !snapshot?.enabled} onclick={() => ask('retry', record.id)}>手动重试…</button></div>{/if}</article>
-    {/each}</div>{/if}
-  {/if}
+  </section>
+  <section class="notification-section subscriptions"><h2>事件订阅</h2>
+    {#each notificationEvents as event}<label class="subscription-row"><span>{event.name}</span><input type="checkbox" checked={snapshot?.subscriptions[event.id]??false} disabled={locked} onchange={change=>{const checked=change.currentTarget.checked;change.currentTarget.checked=snapshot?.subscriptions[event.id]??false;saveGlobal(snapshot!.enabled,event.id,checked);}}></label>{/each}
+  </section>
+  <section class="notification-section"><div class="section-title"><h2>发送记录 · {records.length} 条</h2><button disabled={!native||pending||weixinBusy||blocked} onclick={()=>request('notification_snapshot')}>刷新</button></div>
+    <details class="record-options"><summary>筛选与管理</summary><label class="check"><input type="checkbox" bind:checked={failedOnly}>仅看失败／未知</label><button disabled={locked||!snapshot?.records.length} onclick={()=>ask('clear')}>清空已结束记录…</button></details>
+    <div class="records-table"><table><thead><tr><th>时间 / 渠道</th><th>事件 / 标题</th><th>状态</th></tr></thead><tbody>{#each records as record (record.id)}{@const state=notificationRecordState(record.status)}<tr><td><time>{notificationTime(record.created_at)}</time><small>{notificationChannelNames[record.channel]??'通知渠道'}</small></td><td>{notificationEventName(record.event)}<small>{record.title||'通知'}</small>{#if record.error}<small class="validation">{safeNotificationError(record.error)}</small>{/if}</td><td><span class:success={state.tone==='success'} class:warning={state.tone==='warning'}>{state.label}</span>{#if record.attempts>1}<small>尝试 {record.attempts} 次</small>{/if}{#if record.status==='failed'}<button disabled={locked||!snapshot?.enabled} onclick={()=>ask('retry',record.id)}>重试</button>{/if}</td></tr>{:else}<tr><td colspan="3" class="empty">{failedOnly?'没有失败记录':'暂无发送记录'}</td></tr>{/each}</tbody></table></div>
+  </section>
+  <details class="advanced"><summary>高级配置 · 内容预览与发送策略</summary><div class="preview-select"><label>预览事件<select bind:value={previewEvent}>{#each notificationEvents as event}<option value={event.id}>{event.name}</option>{/each}</select></label></div><div class="message"><strong>{preview.title}</strong><p>{preview.body}</p></div><p class="hint">此处预览不会发送。平台受理不代表已读，手动重试可能重复送达；微信结果未知不自动重发。</p><p class="hint">退出、休眠或断网会影响投递。默认不发送路径、代码或日志。</p></details>
   {#if confirmation}
     <div class="confirmation" use:confirmationFocus role="group" aria-label="确认通知操作">
       <strong>{confirmation.kind === 'save' ? '保存渠道配置？' : confirmation.kind === 'delete' ? '删除此渠道的配置？' : confirmation.kind === 'test' ? '真实发送测试通知？' : confirmation.kind === 'retry' ? '确认重新投递？' : '清空所有发送记录？'}</strong>
@@ -174,13 +152,15 @@
 {/if}
 
 <style>
-  .notifications{min-width:0;color:var(--text);line-height:1.6;container-type:inline-size}
-  .notifications h2,.notifications h3{margin:0;font-size:12px;font-weight:600}.notifications h3{font-size:13px}
-  .overview{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.overview>div{min-width:0}.overview strong{font-size:14px}.overview p,.hint{color:var(--muted);font-size:11px;line-height:1.65}.overview p{margin-top:4px}.master{display:flex;gap:5px;align-items:center;flex:none;white-space:nowrap}
-  .notice,.confirmation{border:1px solid var(--divider);border-left:3px solid var(--warning);background:var(--warning-bg);padding:10px 11px;border-radius:4px;margin:10px 0;overflow-wrap:anywhere}.notice{color:var(--warning)}.feedback{padding:8px 0;color:var(--success);overflow-wrap:anywhere}
-  .tabs{display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--divider);margin:13px 0}.tabs button{border-radius:4px 4px 0 0;border-bottom:2px solid transparent;padding:7px 9px}.tabs .active{color:var(--accent);border-bottom-color:var(--accent);background:var(--selected)}.tabs .refresh{margin-left:auto;padding-left:6px;padding-right:6px}
-  .section-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;flex-wrap:wrap}.section-title>span{font-size:11px;color:var(--muted)}.channels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.channel{min-width:0;border:1px solid var(--divider);border-radius:5px;padding:11px;background:var(--layer)}.channel-top{display:flex;align-items:center;gap:8px}.glyph{display:grid;place-items:center;width:27px;height:27px;background:var(--selected);border:1px solid var(--divider);border-radius:5px;color:var(--accent);font-weight:600;flex:none}.channel>.hint{margin-top:6px}.channel-state{font-size:11px;margin-top:9px;overflow-wrap:anywhere}.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:10px}.actions>button{border-color:var(--stroke)}.actions>button.primary{border-color:var(--accent)}
-  .editor{padding:12px;border:1px solid var(--accent);border-radius:5px;background:var(--layer);margin-top:12px}.editor fieldset{border:0;padding:0;margin:10px 0 0;min-width:0}.field{display:grid;gap:5px;margin:11px 0}.field input{width:100%;min-width:0}.field small{color:var(--muted);line-height:1.6}.check{display:flex;align-items:flex-start;gap:7px}.check input{flex:none;margin:3px 0 0}.validation{font-size:11px;color:var(--warning);margin-top:6px;overflow-wrap:anywhere}.subscriptions{padding-top:16px;margin-top:14px;border-top:1px solid var(--divider)}.event{padding:6px 0}.event small{display:block;color:var(--muted)}.subscriptions>.hint{margin-top:6px}.preview{background:var(--canvas);border:1px solid var(--divider);border-radius:5px;padding:12px;margin-top:15px}.preview-select{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}.preview-select select{max-width:140px;padding:3px 5px}.message{padding:10px;background:var(--surface);border-left:2px solid var(--accent);border-radius:2px;margin-bottom:8px}.message p{margin-top:5px;font-size:11px}.policy{margin-top:14px;font-size:11px;color:var(--muted)}.policy summary{cursor:pointer;color:var(--text);padding:4px 0}.policy p{margin-top:6px}.policy summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .records-heading{justify-content:flex-start}.records-heading>h2{margin-right:auto}.empty{text-align:center;padding:28px 10px;background:var(--canvas);border:1px dashed var(--stroke);border-radius:5px;margin-top:12px}.empty p{color:var(--muted);font-size:11px;margin-top:5px}.records{display:grid;gap:8px;margin-top:10px}.record{padding:11px;border:1px solid var(--divider);border-radius:5px;background:var(--layer);min-width:0}.record-head{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}.record-head strong{overflow-wrap:anywhere;min-width:0;flex:1 1 130px}.badge{font-size:10px;color:var(--muted);border:1px solid var(--divider);padding:1px 5px;border-radius:3px}.badge.success{color:var(--success)}.badge.warning{color:var(--warning);background:var(--warning-bg)}.record .hint{margin-top:4px}.record time{display:block}.confirmation p{margin-top:6px}.confirmation .actions{justify-content:flex-end}
-  @container(max-width:460px){.channels{grid-template-columns:1fr}.channel{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px}.channel-top,.channel-state,.channel>.hint{grid-column:1}.channel .actions{grid-column:2;grid-row:1 / 4;align-self:center;flex-direction:column;margin-top:0}.overview{flex-wrap:wrap;gap:7px}.master{margin-left:auto}.editor{padding:10px}.section-title{gap:6px}.records-heading .check{font-size:11px}}
+  .notifications{min-width:0;color:var(--text);font-size:12px;line-height:1.5}
+  h2{font-size:10px;letter-spacing:.06em;font-weight:500;color:var(--muted);margin:0 0 8px}
+  .master,.channel-row,.subscription-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--divider)}
+  .master{margin-bottom:20px}.channel-label{flex:1;min-width:0}.channel-label strong{font-size:12px;font-weight:400}.channel-label small{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+  .notification-section{margin-bottom:20px}.channel-row>input,.subscription-row>input{flex:none}.channel-row button{white-space:nowrap}
+  .section-title{display:flex;align-items:center;justify-content:space-between;gap:9px;margin-bottom:8px}.section-title h2{margin:0}
+  .editor{padding:12px;border:1px solid var(--stroke);border-radius:4px;background:var(--layer);margin-top:12px}.editor fieldset{border:0;padding:0;margin:8px 0 0;min-width:0}
+  .field{display:grid;gap:5px;margin:11px 0}.field input{width:100%;min-width:0}.field small,.hint{color:var(--muted);font-size:10px;line-height:1.65}.check{display:flex;align-items:center;gap:7px;font-size:11px}
+  .actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.confirmation,.notice{padding:11px;border:1px solid var(--stroke);border-left:2px solid var(--warning);border-radius:4px;background:var(--layer);margin:10px 0;font-size:11px;overflow-wrap:anywhere}.confirmation p{margin-top:7px;line-height:1.65}.confirmation .actions{justify-content:flex-end}.notice,.validation,.warning{color:var(--warning)}.feedback,.success{color:var(--success)}.feedback{font-size:11px;margin:8px 0}
+  .record-options{font-size:10px;margin:8px 0}.record-options summary,.advanced summary{cursor:pointer;color:var(--muted)}.records-table{overflow:auto}.records-table table{border-collapse:collapse;width:100%;font-size:11px;text-align:left}.records-table th{font-size:10px;color:var(--muted);font-weight:400}.records-table td,.records-table th{padding:7px 6px;border-bottom:1px solid var(--divider);vertical-align:top}.records-table small{display:block;color:var(--muted);font-size:10px;overflow-wrap:anywhere}.records-table td:nth-child(2){max-width:200px;overflow-wrap:anywhere}.records-table .validation{color:var(--warning)}.records-table td:last-child{white-space:nowrap}.records-table td:last-child button{display:block;padding:2px 5px;min-height:22px;font-size:10px;margin-top:4px}.empty{text-align:center;color:var(--muted);padding:15px!important}
+  .advanced{font-size:11px;border-top:1px solid var(--divider);padding-top:10px}.advanced p{margin-top:7px}.preview-select{margin:9px 0}.preview-select label{display:flex;align-items:center;gap:9px}.message{padding:10px;border-left:2px solid var(--accent);background:var(--layer);font-size:11px}.message p{margin-top:5px}
 </style>

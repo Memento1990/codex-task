@@ -71,10 +71,10 @@ ul.clean li b{color:var(--fg2);font-weight:500}
   <div class="eyebrow">Codex Floatboard · 原型重设计 · 2026-11-05</div>
   <h1>三套原型方案 <em>— 交互与视觉同时不同</em></h1>
   <p class="lede">
-    功能集与现有产品完全一致（多任务汇总、卡点详情、验收证据、贴边头像球、完成记录、浮窗通知、
+    覆盖现有产品的主要功能范围（多任务汇总、卡点详情、验收证据、贴边头像球、完成记录、浮窗通知、
     独立工具窗、消息渠道、自动更新、数据迁移与修复），技术框架不变，仅使用原生 HTML/CSS/JS。
     三套方案共享同一份合成数据（<code>designs/redesign-v2/shared/data.js</code>，结构与
-    <code>model.ts</code> 的 Task/Snapshot 一致），保证对比时只有一个变量在变：<b>信息怎么组织</b>。
+    <code>model.ts</code> 的映射见数据契约），三套均已接入可操作 Mock，保留各自的<b>信息组织方式</b>。
   </p>
 
   <div class="cards">
@@ -153,7 +153,7 @@ ul.clean li b{color:var(--fg2);font-weight:500}
       <div class="card-body">
         <div class="ltr">方案 B</div>
         <h2>单任务聚焦时间线</h2>
-        <p>一次只读一个任务的生命周期：步骤、卡点、证据按真实计时混排成一条叙事线，
+        <p>一次只读一个任务的生命周期：步骤、卡点、证据按模拟计时混排成一条叙事线，
           其余任务收进顶部胶片条。把"到底进行到哪了"讲清楚。</p>
         <div class="axis" style="border-color:var(--amber)">叙事 · 一次一个任务，纵向生命周期</div>
         <div class="go"><span></span>打开原型 →</div>
@@ -226,9 +226,9 @@ ul.clean li b{color:var(--fg2);font-weight:500}
       <tr><td>空间轴</td><td>行 = 任务，列 = 属性</td><td>纵向 = 时间，横向 = 任务切换</td><td>横向 = 时间，纵向 = 任务</td></tr>
       <tr><td>卡点呈现</td><td>独立列 + 行内展开的卡点卡</td><td>作为时间线上的"中断块"嵌进叙事</td>
         <td>轨道上的红色标记 + 底部横向介入条</td></tr>
-      <tr><td>多任务同时可见</td><td><b>全部</b>（一屏 10+）</td><td><b>3 个</b>（胶片条缩略）</td><td><b>全部</b>，但每行只占 52px</td></tr>
+      <tr><td>多任务同时可见</td><td><b>全部</b>（折叠时密集扫读）</td><td>胶片条缩略，可横向切换</td><td><b>全部</b>，每行约 72px</td></tr>
       <tr><td>单任务信息深度</td><td>中（三栏展开）</td><td><b>深</b>（完整生命周期）</td><td>浅（需下钻）</td></tr>
-      <tr><td>功能发现性</td><td>中：底部完成带 + 工具栏</td><td>中：右侧介入栏</td><td><b>高</b>：常驻命令条 + ⌘K</td></tr>
+      <tr><td>功能发现性</td><td>底部完成带 + 工具栏 + 命令搜索</td><td>右侧介入栏 + 命令搜索</td><td><b>常驻命令条 + Ctrl/⌘K</b></td></tr>
       <tr><td>最贴合的场景</td><td>任务多、要定期巡检</td><td>任务少而复杂、要讲清楚</td><td>多任务并行、关注阻塞时长</td></tr>
       <tr><td>主要风险</td><td>行太多时需要滚动，但结构不崩</td><td>超过 5 个任务时胶片条拥挤</td><td>泳道在窄窗退化，需另一套布局</td></tr>
     </tbody>
@@ -256,12 +256,16 @@ ul.clean li b{color:var(--fg2);font-weight:500}
         <li><b>浮窗通知</b>的常驻卡点 / 定时普通通知规则不变，只是挂到新的视觉语言下。</li>
         <li><b>独立工具窗</b>（设置 / 接入 / 通知 / 更新 / 修复）结构与文案语义不变。</li>
         <li><b>数据与隐私边界</b>：不新增动态流水数据源，时间线只由已有的计时字段还原。</li>
-        <li><b>技术栈</b>：纯 HTML/CSS/JS，无框架、无构建步骤；移植到 Svelte 5 时逐组件替换即可。</li>
+        <li><b>技术栈</b>：纯 HTML/CSS/JS，无框架、无构建步骤；移植到 Svelte 5 前，按数据契约完成字段适配与最小事件投影。</li>
       </ul>
     </div>
   </div>
 
   <div class="note">
+    <b>交互 Mock 已补齐</b>：右上角选择演示场景；可搜索、推进任务、解除卡点、查看证据，并体验接入、通知、更新、迁移与修复。
+    操作保存于当前标签页；每套独立，可随时重置。原版基线：<code>3d2b660</code>。
+    <a href="DATA-CONTRACT.md" style="color:var(--mint)">数据落地契约 ↗</a> ·
+    <a href="validation/README.md" style="color:var(--mint)">验证记录 ↗</a><br>
     所有界面均为原型，数据为合成数据，不代表真实安装或任务。三套原型中，窗宽 980 对应建议放宽后的默认尺寸，
     窗宽 392 为保留的最小宽度；两档都实现了，可直接对照。<br>
     文件：<span class="tag">a-inspection-matrix.html</span>

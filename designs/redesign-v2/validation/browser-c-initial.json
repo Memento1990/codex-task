@@ -1,0 +1,16 @@
+{
+  "variant": "c",
+  "results": [
+    {
+      "name": "baseline renders four active tasks",
+      "pass": true
+    },
+    {
+      "name": "execution",
+      "pass": false,
+      "error": "page.fill could not verify the result: element is not connected"
+    }
+  ],
+  "passed": 1,
+  "total": 2
+}

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 struct ToastQueue { ready: bool, pending: Vec<Value> }
-struct State { utility_busy:Mutex<HashMap<String,bool>>, engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue>, updates: Arc<floatboard_core::update::UpdateService>, dock:Mutex<dock::Dock>, weixin_lab:Arc<Mutex<Option<Arc<floatboard_core::weixin_lab::WeixinLab>>>> }
+struct State { utility_busy:Mutex<HashMap<String,bool>>, preferences_transaction:tauri::async_runtime::Mutex<()>, engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue>, updates: Arc<floatboard_core::update::UpdateService>, dock:Mutex<dock::Dock>, weixin_lab:Arc<Mutex<Option<Arc<floatboard_core::weixin_lab::WeixinLab>>>> }
 
 fn development_mode()->bool{cfg!(debug_assertions)||std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1")||std::env::current_exe().is_ok_and(|path|path.components().any(|part|part.as_os_str()=="target"||part.as_os_str()=="targets"))}
 
@@ -50,12 +50,55 @@ async fn update_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:
 
 fn show_main(app:&tauri::AppHandle) { dock::restore(app); if let Some(w)=app.get_webview_window("main") { let _=w.show(); let _=w.unminimize(); let _=w.set_focus(); } }
 
+#[derive(Default)]
+struct NativePreferenceUndo { taskbar:Option<bool>, themes:Option<(tauri::Theme,Vec<(String,tauri::Theme)>)>, toast_visible:Option<bool> }
+impl NativePreferenceUndo {
+    fn rollback(self,app:&tauri::AppHandle)->Result<(),String>{
+        let mut errors=Vec::new();
+        if self.toast_visible==Some(true){if let Some(w)=app.get_webview_window("toast"){if let Err(error)=w.show(){errors.push(error.to_string());}}}
+        if let Some((fallback,themes))=self.themes{for (label,w) in app.webview_windows(){let previous=themes.iter().find(|(name,_)|name==&label).map(|(_,theme)|*theme).unwrap_or(fallback);if let Err(error)=w.set_theme(Some(previous)){errors.push(error.to_string());}}}
+        if let Some(skip)=self.taskbar{if let Some(w)=app.get_webview_window("main"){let result=app.state::<State>().dock.lock().map_err(|_|"贴边状态异常".to_string()).and_then(|mut dock|dock.preferences(&w,skip));if let Err(error)=result{errors.push(error);}}}
+        if errors.is_empty(){Ok(())}else{Err(format!("原生设置回退失败：{}",errors.join("；")))}
+    }
+}
+fn apply_native_preferences(app:&tauri::AppHandle,previous:&Value,desired:&Value)->Result<NativePreferenceUndo,String>{
+    let mut undo=NativePreferenceUndo::default();
+    let result=(||{
+        if previous["show_taskbar"]!=desired["show_taskbar"]{if let Some(w)=app.get_webview_window("main"){undo.taskbar=Some(!previous["show_taskbar"].as_bool().unwrap_or(false));app.state::<State>().dock.lock().map_err(|_|"贴边状态异常")?.preferences(&w,!desired["show_taskbar"].as_bool().unwrap_or(false))?;}}
+        if previous["theme"]!=desired["theme"]{
+            let before=if previous["theme"]=="dark"{tauri::Theme::Dark}else{tauri::Theme::Light};let theme=if desired["theme"]=="dark"{tauri::Theme::Dark}else{tauri::Theme::Light};
+            undo.themes=Some((before,Vec::new()));
+            for (label,w) in app.webview_windows(){let prior=w.theme().map_err(|e|e.to_string())?;undo.themes.as_mut().unwrap().1.push((label,prior));if prior!=theme{w.set_theme(Some(theme)).map_err(|e|e.to_string())?;}}
+        }
+        if previous["notifications"]!=desired["notifications"]&&desired["notifications"]==false{if let Some(w)=app.get_webview_window("toast"){undo.toast_visible=Some(w.is_visible().map_err(|e|e.to_string())?);w.hide().map_err(|e|e.to_string())?;}}
+        Ok(())
+    })();
+    match result{Ok(())=>Ok(undo),Err(error)=>match undo.rollback(app){Ok(())=>Err(error),Err(rollback)=>Err(format!("{error}；{rollback}"))}}
+}
+async fn save_preferences(app:&tauri::AppHandle,state:&State,patch:Value)->Result<Value,String>{
+    // Keep validation, native effects, persistence and publication in one order
+    // even when separate settings WebViews submit controls concurrently.
+    let _transaction=state.preferences_transaction.lock().await;
+    let worker=state.engine.clone();
+    let previous=tauri::async_runtime::spawn_blocking(move||{let engine=worker.lock().map_err(|_|"本地状态异常".to_string())?;Ok::<_,String>(floatboard_core::desktop::load_options(&engine.root))}).await.map_err(|_|"设置读取已中断")??;
+    let desired=floatboard_core::desktop::merge_options(&previous,&patch)?;
+    let ui=app.clone();let before=previous.clone();
+    let undo=dock::on_main(app,move||apply_native_preferences(&ui,&before,&desired)).await?;
+    let worker=state.engine.clone();
+    let result=tauri::async_runtime::spawn_blocking(move||worker.lock().map_err(|_|"本地状态异常".to_string())?.call("preferences",patch)).await.unwrap_or_else(|_|Err("设置保存已中断".into()));
+    match result{
+        Ok(options)=>{if options["notifications"]==false{if let Ok(mut queue)=state.toasts.lock(){queue.pending.clear();}}let _=app.emit("host-event",json!({"type":"options","options":options}));Ok(options)},
+        Err(error)=>{let ui=app.clone();match dock::on_main(app,move||undo.rollback(&ui)).await{Ok(())=>Err(error),Err(rollback)=>Err(format!("{error}；{rollback}"))}}
+    }
+}
+
 #[tauri::command]
 async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, method:String, mut params:Value)->Result<Value,String> {
     let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data","notification_snapshot","notification_save","notification_channel_save","notification_channel_delete","notification_test","notification_retry","notification_clear","notification_weixin_action","database_repair"];
     let permitted=if window.label()=="main"{allowed.contains(&method.as_str())}else if let Some(kind)=UtilityKind::from_label(window.label()){kind.bridge(&method)}else{["completed","toast"].contains(&window.label())&&method=="snapshot"};
     if !permitted { return Err("此窗口不允许该操作".into()); }
-    if window.label()!="main" { params["notify"]=json!(false); }
+    if window.label()!="main" { if let Some(params)=params.as_object_mut(){params.insert("notify".into(),json!(false));} }
+    if method=="preferences"{return save_preferences(&app,&state,params).await;}
     let worker=state.engine.clone();
     let name=method.clone();
     let result=tauri::async_runtime::spawn_blocking(move||{
@@ -79,14 +122,6 @@ async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::
         worker.lock().map_err(|_|"本地状态异常".to_string())?.call(&name,params)
     }).await.map_err(|_|"本地操作已中断")??;
     if method=="database_repair" && result["status"]=="ready"{app.exit(0);return Ok(result);}
-    if method=="preferences" {
-        let ui=app.clone();let skip=!result["show_taskbar"].as_bool().unwrap_or(false);
-        dock::on_main(&app,move||{if let Some(w)=ui.get_webview_window("main"){ui.state::<State>().dock.lock().map_err(|_|"贴边状态异常")?.preferences(&w,skip)?;}Ok(())}).await?;
-        let theme=if result["theme"]=="dark"{tauri::Theme::Dark}else{tauri::Theme::Light};
-        for (_,w) in app.webview_windows(){let _=w.set_theme(Some(theme));}
-        if !result["notifications"].as_bool().unwrap_or(true) { if let Some(w)=app.get_webview_window("toast") { let _=w.emit("host-event",json!({"type":"clear"})); let _=w.hide(); } }
-        let _=app.emit("host-event",json!({"type":"options","options":result}));
-    }
     if method=="snapshot" && window.label()=="main"{
         let _=floatboard_core::update_install::acknowledge();
         let root=state.engine.lock().map_err(|_|"本地状态异常")?.root.clone();
@@ -103,7 +138,8 @@ fn completed(app:&tauri::AppHandle,value:Value)->Result<(),String> {
         let theme=main.theme().ok();
         // Ownership preserves the relationship; matching the owner's topmost
         // band also keeps history above it across Windows pin/unpin changes.
-        let w=WebviewWindowBuilder::new(app,"completed",WebviewUrl::App("index.html".into())).owner(&main).map_err(|e|e.to_string())?.always_on_top(main.is_always_on_top().map_err(|e|e.to_string())?).title("已完成记录").inner_size(760.,520.).min_inner_size(540.,400.).decorations(false).skip_taskbar(true).theme(theme).initialization_script(&script).build().map_err(|e|e.to_string())?;
+        let monitor=main.current_monitor().ok().flatten().or_else(||main.primary_monitor().ok().flatten()).ok_or("屏幕不可用")?;let work=monitor.work_area();let scale=monitor.scale_factor();let width=820f64.min((work.size.width as f64/scale-24.).max(1.));let height=640f64.min((work.size.height as f64/scale-24.).max(1.));
+        let w=WebviewWindowBuilder::new(app,"completed",WebviewUrl::App("index.html".into())).owner(&main).map_err(|e|e.to_string())?.always_on_top(main.is_always_on_top().map_err(|e|e.to_string())?).title("已完成记录").inner_size(width,height).min_inner_size(width.min(540.),height.min(400.)).position(work.position.x as f64/scale+(work.size.width as f64/scale-width)/2.,work.position.y as f64/scale+(work.size.height as f64/scale-height)/2.).transparent(true).decorations(false).skip_taskbar(true).theme(theme).initialization_script(&script).build().map_err(|e|e.to_string())?;
         w.set_focus().map_err(|e|e.to_string())?;
     }
     Ok(())
@@ -118,7 +154,7 @@ fn open_utility(app:&tauri::AppHandle,kind:UtilityKind)->Result<(),String>{
     let work=monitor.work_area();let scale=monitor.scale_factor();let (width,height)=kind.size(work.size.width as f64/scale,work.size.height as f64/scale);
     let script=format!("window.__FLOATBOARD_DEVELOPMENT__={};window.__FLOATBOARD_VIEW__={};",development_mode(),json!({"view":"utility","kind":kind.name()}));
     app.state::<State>().utility_busy.lock().map_err(|_|"窗口状态异常")?.insert(label.clone(),true);
-    let result=WebviewWindowBuilder::new(app,&label,WebviewUrl::App("index.html".into())).owner(&main).map_err(|e|e.to_string())?.title(kind.title()).inner_size(width,height).min_inner_size(width.min(360.),height.min(300.)).position(work.position.x as f64/scale+(work.size.width as f64/scale-width)/2.,work.position.y as f64/scale+(work.size.height as f64/scale-height)/2.).decorations(false).resizable(true).always_on_top(true).skip_taskbar(true).theme(main.theme().ok()).initialization_script(&script).build();
+    let result=WebviewWindowBuilder::new(app,&label,WebviewUrl::App("index.html".into())).owner(&main).map_err(|e|e.to_string())?.title(kind.title()).inner_size(width,height).min_inner_size(width.min(360.),height.min(300.)).position(work.position.x as f64/scale+(work.size.width as f64/scale-width)/2.,work.position.y as f64/scale+(work.size.height as f64/scale-height)/2.).transparent(true).decorations(false).resizable(true).always_on_top(true).skip_taskbar(true).theme(main.theme().ok()).initialization_script(&script).build();
     match result{Ok(w)=>{w.set_focus().map_err(|e|e.to_string())?;Ok(())},Err(e)=>{app.state::<State>().utility_busy.lock().map_err(|_|"窗口状态异常")?.remove(&label);Err(e.to_string())}}
 }
 
@@ -126,17 +162,17 @@ fn open_utility(app:&tauri::AppHandle,kind:UtilityKind)->Result<(),String>{
 // Windows 创建 WebView 走异步命令，避免阻塞消息循环。
 async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, action:String, value:Value)->Result<Value,String> {
     let label=window.label();
-    if label=="toast" && !["toast_size","toast_ready","open_notice","hide"].contains(&action.as_str()) || label=="completed" && !["hide","copy","open_reference","drag","minimize","toggle_maximize","window_state"].contains(&action.as_str()) { return Err("窗口操作不允许".into()); }
+    if label=="toast" && !["toast_size","toast_ready","open_notice","hide"].contains(&action.as_str()) || label=="completed" && !["show","hide","copy","open_reference","drag","minimize","toggle_maximize","window_state"].contains(&action.as_str()) { return Err("窗口操作不允许".into()); }
     if let Some(kind)=UtilityKind::from_label(label){if !kind.host(&action){return Err("窗口操作不允许".into());}}
     else if !["main","completed","toast"].contains(&label){return Err("窗口操作不允许".into());}
     match action.as_str() {
-        "utility_open"=>{let kind=UtilityKind::parse(value.as_str().unwrap_or("")).ok_or("未知功能窗口")?;if label!="main"&&!(label=="utility-settings"&&matches!(kind,UtilityKind::Notifications|UtilityKind::Updates)){return Err("此窗口不能打开该功能".into());}open_utility(&app,kind)?;},
+        "utility_open"=>{let kind=UtilityKind::parse(value.as_str().unwrap_or("")).ok_or("未知功能窗口")?;if label!="main"&&!(label=="utility-settings"&&matches!(kind,UtilityKind::Notifications|UtilityKind::Updates|UtilityKind::Integration|UtilityKind::Repair)){return Err("此窗口不能打开该功能".into());}open_utility(&app,kind)?;},
         "utility_busy"=>{if UtilityKind::from_label(label).is_none(){return Err("非功能窗口".into());}state.utility_busy.lock().map_err(|_|"窗口状态异常")?.insert(label.to_string(),value.as_bool().unwrap_or(true));},
         "utility_close"=>{if UtilityKind::from_label(label).is_none(){return Err("非功能窗口".into());}if state.utility_busy.lock().map_err(|_|"窗口状态异常")?.get(label).copied().unwrap_or(true){return Err("请等待当前操作完成".into());}window.destroy().map_err(|e|e.to_string())?;},
         "hide" => { if label=="main" { if let Some(w)=app.get_webview_window("completed"){let _=w.hide();} } window.hide().map_err(|e|e.to_string())?; },
         "show" => {let ui=app.clone();dock::on_main(&app,move||{show_main(&ui);Ok(())}).await?;},
         "quit" => app.exit(0),
-        "dock_state"|"dock_restore"|"dock_hover"|"dock_set_enabled"|"dock_collapse"|"details_collapse" => { if label!="main"{return Err("此窗口不支持贴边".into());}let ui=app.clone();return dock::on_main(&app,move||ui.state::<State>().dock.lock().map_err(|_|"贴边状态异常")?.action(&window,&action,&value)).await; },
+        "dock_state"|"dock_restore"|"dock_hover"|"dock_measure"|"dock_set_enabled"|"dock_collapse"|"details_collapse" => { if label!="main"{return Err("此窗口不支持贴边".into());}let ui=app.clone();return dock::on_main(&app,move||ui.state::<State>().dock.lock().map_err(|_|"贴边状态异常")?.action(&window,&action,&value)).await; },
         "dock_drag" => {if label!="main"{return Err("此窗口不支持头像拖动".into());}return dock::on_main(&app,move||dock::start_ball_drag(&window)).await;},
         "drag" => {if label=="main"{dock::on_main(&app,move||dock::start_drag(&window)).await?;}else{window.start_dragging().map_err(|e|e.to_string())?;}},
         "minimize" => window.minimize().map_err(|e|e.to_string())?,
@@ -176,7 +212,7 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
                     if let Some(index)=queue.pending.iter().position(|notice|notice["sticky"]!=true){queue.pending.remove(index);}
                 }
                 if app.get_webview_window("toast").is_none() {
-                    WebviewWindowBuilder::new(&app,"toast",WebviewUrl::App("index.html".into())).title("任务通知").inner_size(370.,160.).transparent(true).decorations(false).resizable(false).always_on_top(true).skip_taskbar(true).focused(false).focusable(false).visible(false).initialization_script("window.__FLOATBOARD_VIEW__={view:'toast'};").build().map_err(|e|e.to_string())?;
+                    WebviewWindowBuilder::new(&app,"toast",WebviewUrl::App("index.html".into())).title("任务通知").inner_size(310.,160.).transparent(true).decorations(false).resizable(false).always_on_top(true).skip_taskbar(true).focused(false).focusable(false).visible(false).initialization_script("window.__FLOATBOARD_VIEW__={view:'toast'};").build().map_err(|e|e.to_string())?;
                 }
             }
         },
@@ -189,8 +225,8 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
             let monitor=app.get_webview_window("main").and_then(|w|w.current_monitor().ok().flatten()).or_else(||window.primary_monitor().ok().flatten()).ok_or("屏幕不可用")?;
             let work=monitor.work_area();let scale=monitor.scale_factor();
             let height=value.as_f64().unwrap_or(160.).max(1.).min(work.size.height as f64/scale-24.);
-            window.set_size(LogicalSize::new(370.,height)).map_err(|e|e.to_string())?;
-            window.set_position(LogicalPosition::new((work.position.x as f64+work.size.width as f64)/scale-382.,(work.position.y as f64+work.size.height as f64)/scale-height-12.)).map_err(|e|e.to_string())?;
+            window.set_size(LogicalSize::new(310.,height)).map_err(|e|e.to_string())?;
+            window.set_position(LogicalPosition::new((work.position.x as f64+work.size.width as f64)/scale-322.,(work.position.y as f64+work.size.height as f64)/scale-height-12.)).map_err(|e|e.to_string())?;
             window.show().map_err(|e|e.to_string())?;
         },
         "open_notice" => { let ui=app.clone();dock::on_main(&app,move||{show_main(&ui);Ok(())}).await?; if value["completed"]==true {completed(&app,value.clone())?;} else {let _=app.emit_to("main","host-event",json!({"type":"select","value":value}));} },
@@ -221,10 +257,10 @@ pub fn run() {
     let worker=Arc::new(Mutex::new(adapter));
     let updates=floatboard_core::update::UpdateService::new(root.clone());
     let scheduled=updates.clone();std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(20));loop{if !development && scheduled.snapshot()["preferences"]["auto_check"]==true{let _=scheduled.check();}std::thread::sleep(std::time::Duration::from_secs(6*60*60));}});
-    app.manage(State{utility_busy:Mutex::new(HashMap::new()),engine:worker.clone(),toasts:Mutex::new(ToastQueue::default()),updates,dock:Mutex::new(dock::Dock::new(!options["show_taskbar"].as_bool().unwrap_or(false))),weixin_lab:Arc::new(Mutex::new(None))});
+    app.manage(State{utility_busy:Mutex::new(HashMap::new()),preferences_transaction:tauri::async_runtime::Mutex::new(()),engine:worker.clone(),toasts:Mutex::new(ToastQueue::default()),updates,dock:Mutex::new(dock::Dock::new(!options["show_taskbar"].as_bool().unwrap_or(false))),weixin_lab:Arc::new(Mutex::new(None))});
 
-            let width=stored["width"].as_f64().unwrap_or(772.).max(392.);
-            let height=stored["height"].as_f64().unwrap_or(570.).max(570.);
+            let width=stored["width"].as_f64().unwrap_or(980.).max(392.);
+            let height=stored["height"].as_f64().unwrap_or(680.).max(570.);
             let theme=if options["theme"]=="dark"{tauri::Theme::Dark}else{tauri::Theme::Light};
             let w=WebviewWindowBuilder::new(app,"main",WebviewUrl::App("index.html".into())).title(if development{"[DEV] Codex · 卡点调度台"}else{"Codex · 卡点调度台"}).initialization_script(format!("window.__FLOATBOARD_DEVELOPMENT__={};",development)).inner_size(width,height).min_inner_size(392.,570.).transparent(true).decorations(false).resizable(true).skip_taskbar(!options["show_taskbar"].as_bool().unwrap_or(false)).theme(Some(theme)).always_on_top(stored["pinned"].as_bool().unwrap_or(true)).build()?;
             if let Some(monitor)=w.primary_monitor()? { let work=monitor.work_area();let scale=monitor.scale_factor();let max_w=work.size.width as f64/scale;let max_h=work.size.height as f64/scale;

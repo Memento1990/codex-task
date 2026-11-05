@@ -16,6 +16,8 @@ fn legacy_sqlite_tasks_and_timing_match_exactly(){
     fn numbers(value:&mut Value){match value{Value::Number(n)=>*value=json!(n.as_f64().unwrap()),Value::Array(items)=>items.iter_mut().for_each(numbers),Value::Object(items)=>items.values_mut().for_each(numbers),_=>{}}}
     for task in expected.as_array_mut().unwrap(){task.as_object_mut().unwrap().remove("history");if task["title"].as_str()==Some("")&&task["revision"].as_i64().unwrap_or(-1)<0{if let Some(title)=task["plan"][0]["title"].as_str().map(str::to_owned){task["title"]=json!(title);}}}
     expected.as_array_mut().unwrap().retain(|task|task["revision"].as_i64().unwrap_or(-1)>=0||task["plan"].as_array().is_some_and(|plan|!plan.is_empty()));
+    // Additive first-report/waiting projections must not alter legacy fields.
+    for task in actual.as_array_mut().unwrap(){task.as_object_mut().unwrap().remove("waiting_since");if let Some(items)=task["evidence"].as_array_mut(){for item in items{for key in ["id","at","time_source"]{item.as_object_mut().unwrap().remove(key);}}}}
     numbers(&mut expected);numbers(&mut actual);assert_eq!(actual,expected);
 }
 #[test]
@@ -75,7 +77,7 @@ fn window_state_preserves_legacy_fields_and_validates_types(){
 }
 #[test]
 fn preferences_validate_boundaries_without_touching_registry(){
-    for value in [json!({"notifications":"yes"}),json!({"theme":"custom"}),json!({"notification_seconds":0}),json!({"notification_seconds":31}),json!({"notification_seconds":true})]{assert!(desktop::validate_options(&value).is_err());}let temp=Temp::new();let value=desktop::save_options(&temp.0,&temp.0.join("CodexFloatboard.exe"),&desktop::defaults()).unwrap();assert_eq!(value["auto_start"],false);assert_eq!(desktop::load_options(&temp.0)["theme"],"light");
+    for value in [json!({"notifications":"yes"}),json!({"theme":"custom"}),json!({"notification_seconds":0}),json!({"notification_seconds":61}),json!({"notification_seconds":true})]{assert!(desktop::validate_options(&value).is_err());}let temp=Temp::new();let value=desktop::save_options(&temp.0,&temp.0.join("CodexFloatboard.exe"),&desktop::defaults()).unwrap();assert_eq!(value["auto_start"],false);assert_eq!(desktop::load_options(&temp.0)["theme"],"dark");
 }
 #[test]
 fn dock_preferences_and_detail_state_are_backward_compatible(){

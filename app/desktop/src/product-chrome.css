@@ -1,0 +1,118 @@
+/* Scheme A chrome. Native behavior stays with the host; geometry follows the prototype. */
+:root{background:transparent}
+.app.matrix-a{--surface:var(--mx-panel);--canvas:var(--mx-panel);--layer:var(--mx-panel2);--text:var(--mx-fg);--muted:var(--mx-dim);--divider:var(--mx-line);--stroke:var(--mx-line2);--accent:var(--mx-amber);--selected:var(--mx-panel3);--success:var(--mx-green);--warning:var(--mx-red);--warning-bg:color-mix(in srgb,var(--mx-red) 6%,var(--mx-panel));font-family:var(--mx-sans);font-size:12px;line-height:1.5;position:relative;background:transparent;color:var(--mx-fg);border:0;border-radius:10px;overflow:hidden}
+.matrix-a button,.matrix-a input,.matrix-a select{font:inherit;color:inherit}
+.matrix-a button{font-size:12px;min-height:29px;padding:6px 9px;border:1px solid var(--mx-line2);border-radius:4px;background:var(--mx-panel);box-shadow:none;cursor:pointer}
+.matrix-a button:hover{background:color-mix(in srgb,var(--mx-amber) 8%,var(--mx-panel));border-color:var(--mx-amber)}
+.matrix-a button:disabled{cursor:default;opacity:.4}
+.matrix-a button.primary{color:var(--mx-amber);border-color:var(--mx-amber);background:var(--mx-panel)}
+.matrix-a input,.matrix-a select{font-size:12px;min-height:29px;padding:6px 9px;border:1px solid var(--mx-line2);border-radius:4px;background:var(--mx-panel);outline-offset:2px}
+.matrix-a input[type=checkbox]{accent-color:var(--mx-amber);width:30px;height:16px;min-height:16px;cursor:pointer;flex:none}
+.matrix-a button:focus-visible,.matrix-a input:focus-visible,.matrix-a select:focus-visible,.matrix-a summary:focus-visible{outline:2px solid var(--mx-amber);outline-offset:2px}
+.matrix-a .panel-shell{height:100%;width:100%;border:1px solid var(--mx-line2);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;background:var(--mx-panel);position:relative}
+.matrix-a .panel-shell[hidden]{display:none}
+.matrix-a .toolbar{height:38px;min-height:38px;padding:0 8px 0 12px;gap:10px;background:var(--mx-panel);border-bottom:1px solid var(--mx-line);flex:none}
+.matrix-a .toolbar-drag{gap:10px;flex:1;min-width:0;overflow:hidden}
+.matrix-a .toolbar-drag>strong{font-size:12px;font-weight:600;letter-spacing:.01em}
+.matrix-a .app-mark{height:19px;width:19px;display:block;padding:0;border-radius:4px;background:var(--mx-fg);color:var(--mx-bg);font:700 10px/19px var(--mx-mono);text-align:center}
+.matrix-a .connection{display:flex;align-items:center;gap:5px;flex:0 1 auto;border:1px solid var(--mx-line2);border-radius:20px;padding:2px 7px 2px 6px;font:10px var(--mx-mono);color:var(--mx-dim);max-width:275px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.matrix-a .connection i{width:5px;height:5px;min-width:5px;background:var(--mx-green);box-shadow:0 0 6px var(--mx-green)}
+.matrix-a .connection.offline i{background:var(--mx-amber);box-shadow:0 0 6px var(--mx-amber)}
+.matrix-a .connection.unconfirmed i{background:var(--mx-dim);box-shadow:none}
+.matrix-a .toolbar-actions{gap:1px;margin:0;flex:none}
+.matrix-a .toolbar .icon-button{width:27px;height:27px;min-height:27px;padding:0;display:grid;place-items:center;color:var(--mx-fg2);border:0;background:transparent;border-radius:5px}
+.matrix-a .toolbar .icon-button:hover{background:var(--mx-panel3);color:var(--mx-fg)}
+.matrix-a .toolbar .icon-button.pressed{color:var(--mx-amber)}
+.matrix-a .window-controls{margin:0;align-self:stretch;display:flex}
+.matrix-a .window-controls button{width:38px;min-height:38px;padding:0;border:0;border-radius:0;display:grid;place-items:center;color:var(--mx-dim);background:transparent}
+.matrix-a .window-controls button:hover{background:var(--mx-panel3);color:var(--mx-fg)}
+.matrix-a .window-controls .window-close:hover{background:#c0402f;color:white}
+.matrix-a .dev-tag{font:8px var(--mx-mono);color:var(--mx-amber);padding:1px 3px;border:1px solid var(--mx-line2);border-radius:3px;flex:none}
+.matrix-a .matrix-workspace{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden}
+.matrix-a .panel-shell>footer{height:29px;min-height:29px;padding:0 12px;gap:12px;display:flex;align-items:center;background:var(--mx-panel);border-top:1px solid var(--mx-line);color:var(--mx-dim2);font:9.5px var(--mx-mono)}
+.matrix-a .footer-actions{gap:12px;white-space:nowrap;margin-left:auto}
+.matrix-a footer button{min-height:0;border:0;padding:0;background:transparent;color:var(--mx-dim);font:9.5px var(--mx-mono)}
+.matrix-a footer button:hover{text-decoration:underline;color:var(--mx-fg2)}
+.matrix-a footer small{font:inherit}
+.matrix-a .offline-banner{display:flex;gap:10px;align-items:center;flex:none;padding:5px 12px;font-size:10px;border-bottom:1px solid var(--mx-line);max-height:90px;overflow:auto}
+.matrix-a .offline-banner>span{flex:1;min-width:0}
+.matrix-a .offline-banner button{font-size:10px;min-height:22px;padding:1px 5px}
+/* Tool windows keep a fixed header/footer and one scrollable body. */
+.matrix-a .modal-backdrop{background:#0008;padding:0;inset:0}
+.matrix-a .modal{display:flex;flex-direction:column;width:560px;height:640px;max-width:100%;max-height:100%;padding:0;border:1px solid var(--mx-line2);border-radius:9px;background:var(--mx-panel);overflow:hidden;box-shadow:0 20px 60px #0008}
+.matrix-a .utility-backdrop{position:absolute;inset:0;display:flex;padding:0;background:transparent}
+.matrix-a .utility-backdrop>.modal{width:100%;height:100%;max-width:100%;max-height:100%}
+.matrix-a .modal-title{height:39px;min-height:39px;display:flex;align-items:center;gap:9px;padding:0 12px;margin:0;border-bottom:1px solid var(--mx-line);font-size:12px}
+.matrix-a .modal-title .utility-drag{display:flex;flex:1;min-width:0;align-items:center;gap:9px;height:100%}
+.matrix-a .modal-title strong{font-size:12px;font-weight:600}
+.matrix-a .modal-title small{font:9px var(--mx-mono);color:var(--mx-dim)}
+.matrix-a .modal-title button{margin-left:auto;padding:5px 7px;min-height:25px;border:0;background:transparent}
+.matrix-a .modal-body{flex:1;min-height:0;overflow:auto;padding:15px}
+.matrix-a .modal-form{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.matrix-a .modal-actions{min-height:34px;flex:none;display:flex;align-items:center;gap:7px;padding:6px 12px;margin:0;border-top:1px solid var(--mx-line);font-size:10px;color:var(--mx-dim)}
+.matrix-a .modal-actions small{font-size:10px}
+.matrix-a .settings-feedback{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.matrix-a .settings-feedback.failed{color:var(--mx-red)}
+.matrix-a .settings-section{margin:0 0 20px}
+.matrix-a .settings-section h3{font-size:10px;font-weight:500;letter-spacing:.06em;color:var(--mx-dim);margin:0 0 8px}
+.matrix-a .settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--mx-line);margin:0;min-height:35px}
+.matrix-a .settings-row>span{flex:1}
+.matrix-a .settings-row>select,.matrix-a .settings-row>input[type=number]{width:160px;min-width:0}
+.matrix-a .utility-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.matrix-a .data-current{font:10px/1.7 var(--mx-mono);color:var(--mx-fg2);white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 8px}
+.matrix-a .migration-preview{padding-top:12px;display:grid;gap:9px}
+.matrix-a .data-path{font-size:11px;display:grid;gap:6px}
+.matrix-a .data-path input{width:100%;min-width:0}
+.matrix-a .check{font-size:11px;margin:9px 0;gap:7px}
+.matrix-a .confirm-box{font-size:11px;background:var(--mx-panel2);border:1px solid var(--mx-line2);border-radius:4px;padding:11px;margin-top:10px;line-height:1.65}
+.matrix-a .confirm-box p{margin:6px 0;color:var(--mx-fg2)}
+.matrix-a .confirm-box>div:last-child{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;margin-top:10px}
+.matrix-a .connection-diagnostics{background:var(--mx-panel);border:1px solid var(--mx-line2);border-radius:4px;font-size:11px;padding:8px 10px;margin:9px 0}
+.matrix-a summary{cursor:pointer;color:var(--mx-fg2)}
+.matrix-a .form-note{color:var(--mx-red);font-size:11px;min-height:0;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px}
+.matrix-a .connection-steps{margin:0 0 15px;gap:7px}
+.matrix-a .integration-status{padding:0 0 12px;align-items:start;gap:9px}
+.matrix-a .integration-status strong{font-size:12px}
+.matrix-a .integration-icon{width:28px;height:28px;font-size:17px;background:var(--mx-panel2);flex:none}
+.matrix-a .integration-status p{font-size:11px;color:var(--mx-dim);line-height:1.65}
+.matrix-a .connection-evidence{border:0;padding:0;margin:4px 0 14px}
+.matrix-a .connection-evidence>div{grid-template-columns:110px minmax(0,1fr);padding:9px 0}
+.matrix-a .environment-note{font-size:10px;padding:7px 9px;margin-bottom:12px;border:1px solid var(--mx-line2);border-radius:4px}
+.matrix-a .environment-note p,.matrix-a .source-home{font-size:10px;line-height:1.6}
+.matrix-a .sync-section{margin-top:20px}
+.matrix-a .updates{margin:0;padding:0;border:0}
+.matrix-a .updates-heading{margin-bottom:14px}
+.matrix-a .updates-heading>strong{display:none}
+.matrix-a .update-status>strong{font-size:12px}
+.matrix-a .update-preferences{margin-top:20px}
+.matrix-a .update-preferences .check{justify-content:space-between;flex-direction:row-reverse;padding:9px 0;border-bottom:1px solid var(--mx-line);margin:0}
+.matrix-a .update-preferences p{font-size:10px}
+.matrix-a .update-notes>div{font-size:11px}
+.matrix-a .toast-stack{padding:1px;gap:8px}
+.matrix-a .toast{border:1px solid var(--mx-line2);background:var(--mx-panel);border-radius:7px;box-shadow:0 14px 40px #0007}
+.matrix-a .toast-open{border:0;border-radius:0;background:transparent;min-height:0;padding:12px;text-align:left;gap:6px}
+.matrix-a .toast-open:hover{background:var(--mx-panel2)}
+.matrix-a .toast-open strong{font-size:12px;padding-right:19px}
+.matrix-a .toast-open span{font-size:11px;color:var(--mx-dim)}
+.matrix-a .toast-close{border:0;min-height:22px;height:22px;width:22px;padding:0;font-size:16px;right:5px;top:5px;background:transparent}
+.matrix-a .blocker-toast{border-left:2px solid var(--mx-red)}
+.matrix-a .toast-blocker-label{color:var(--mx-red)!important;display:flex;align-items:center;gap:5px}
+/* The host reserves transparent padding for the orb badge and summary shadow. */
+.matrix-a .dock-shell{position:absolute;inset:0;width:100%;height:100%;padding:0;background:transparent;display:block;overflow:hidden}
+.matrix-a .dock-ball{position:absolute;top:12px;right:12px;left:auto;width:56px;height:56px;min-height:56px;padding:0;display:grid;place-items:center;border:1px solid var(--mx-line2);border-radius:50%;background:var(--mx-panel);color:var(--mx-amber);touch-action:none;cursor:grab;overflow:visible}
+.matrix-a .dock-shell.expanded .dock-ball{top:24px}
+.matrix-a .dock-shell.left .dock-ball{left:12px;right:auto}
+.matrix-a .dock-ball:hover{background:var(--mx-panel);border-color:var(--mx-line2)}
+.matrix-a .dock-ball>svg{position:absolute;inset:0;width:56px;height:56px;transform:rotate(-90deg)}
+.matrix-a .dock-ring-track{fill:none;stroke:var(--mx-line2);stroke-width:3}
+.matrix-a .dock-ring{fill:none;stroke:var(--mx-amber);stroke-width:3;stroke-linecap:butt;transform:none;transform-origin:center}
+.matrix-a .dock-progress{font:11px var(--mx-mono);font-weight:400;color:var(--mx-fg)}
+.matrix-a .dock-badge{position:absolute;right:-2px;top:-3px;left:auto;bottom:auto;transform:none;min-width:0;max-width:none;font:10px var(--mx-mono);line-height:15px;padding:2px 4px;border:0;border-radius:8px;color:#141719;background:var(--mx-red)}
+.matrix-a .dock-ball.attention .dock-badge{background:var(--mx-red);color:#141719;border:0}
+.matrix-a .dock-summary{position:absolute;top:12px;right:80px;left:auto;width:260px;height:auto;min-height:0;display:block;padding:12px;border:1px solid var(--mx-line2);border-radius:6px;background:var(--mx-panel);box-shadow:0 12px 24px #0005;font-size:11px;overflow:hidden}
+.matrix-a .dock-shell.left .dock-summary{left:80px;right:auto}
+.matrix-a .dock-summary strong{font-size:11px;font-weight:600;line-height:1.5;margin-bottom:7px;white-space:normal;overflow-wrap:anywhere}
+.matrix-a .dock-summary span{font-size:11px;line-height:1.5;white-space:normal;overflow-wrap:anywhere;color:var(--mx-dim)}
+.matrix-a .dock-summary small{font-size:10px;line-height:1.5;margin-top:11px;white-space:normal;color:var(--mx-dim)}
+@media(max-width:680px){.matrix-a .toolbar{gap:7px;padding:0 2px 0 10px}.matrix-a .toolbar-drag{gap:7px}.matrix-a .connection{max-width:110px}.matrix-a .panel-shell>footer{font-size:9px;padding:0 10px}.matrix-a .footer-actions{gap:6px}}
+@media(max-width:440px){.matrix-a .toolbar-drag{gap:7px}.matrix-a .connection{max-width:84px;display:block;padding-left:7px;flex:1 1 auto}.matrix-a .connection i{display:none}.matrix-a .toolbar-drag>strong{font-size:12px}.matrix-a .dev-tag{position:absolute;left:10px;top:0;font-size:6px;border:0;padding:0;background:var(--mx-panel)}.matrix-a .window-controls button{width:30px}.matrix-a .toolbar-actions{gap:1px}.matrix-a .toolbar .icon-button{width:27px}.matrix-a .connection-evidence>div{grid-template-columns:90px minmax(0,1fr)}.matrix-a .settings-row>select,.matrix-a .settings-row>input[type=number]{width:140px}}

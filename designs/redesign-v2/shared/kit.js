@@ -28,6 +28,7 @@
 
   /* 计时器跑动中：从 startedAt 累计到现在；已结束：用固定区间。 */
   function elapsed(t) {
+    if (t.timing) return Math.max(0, t.timing.seconds + (t.timing.since == null ? 0 : Date.now() / 1000 - t.timing.since));
     if (!t.startedAt) return null;
     return (t.endedAt || Date.now() / 1000) - t.startedAt;
   }
@@ -60,6 +61,7 @@
   /* 任务状态 → 语义色调，三套原型共用语义、各自映射颜色。 */
   function tone(t) {
     if (t.status === 'completed') return 'done';
+    if (t.status === 'cancelled') return 'cancelled';
     if (t.status === 'unreported') return 'unknown';
     if (openBlockers(t).length) return 'blocked';
     if (t.status === 'waiting') return 'waiting';
@@ -86,12 +88,13 @@
   function actionItems(tasks) {
     const items = [];
     for (const t of tasks) {
+      if (['completed','cancelled','unreported'].includes(t.status)) continue;
       for (const b of t.blockers) if (b.open) items.push({ kind: 'blocker', task: t, blocker: b, at: b.openedAt });
       if (t.status === 'waiting' && !openBlockers(t).length) {
-        items.push({ kind: 'waiting', task: t, at: t.startedAt, blocker: null });
+        items.push({ kind: 'waiting', task: t, at: t.waitingSince, blocker: null });
       }
     }
-    return items.sort((a, b) => a.at - b.at);
+    return items.sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
   }
 
   window.KIT = {

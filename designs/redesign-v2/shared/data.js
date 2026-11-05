@@ -1,4 +1,4 @@
-/* 共享合成数据 — 结构与 app/desktop/src/model.ts 的 Task/Snapshot 一致。
+/* 共享合成数据 — 原型视图模型，实际字段适配见 ../DATA-CONTRACT.md。
    所有时间为相对加载时刻的“多少秒前”，避免原型里出现过期日期。
    三套原型共用这一份数据，保证对比时变量单一。 */
 (function () {
@@ -163,10 +163,10 @@
           impact: '最后两步无法验证，任务整体停在验收阶段。',
           owner: '测试负责人 · 周',
           resolveWhen: '为该账号追加 report:export 权限',
-          openedAgo: 4200,
+          openedAgo: 2820,
         },
       ],
-      evidence: [['分片校验记录', 'https://example.invalid/qa/report-chunking', 4600]],
+      evidence: [['分片校验记录', 'https://example.invalid/qa/report-chunking', 2820]],
     }),
     task({
       id: 'doc',
@@ -237,8 +237,9 @@
     startedAt: abs(t.startedAgo),
     endedAt: abs(t.endedAgo),
     plan: t.plan.map((s) => ({ ...s, startedAt: abs(s.startedAgo), endedAt: abs(s.endedAgo) })),
+    waitingSince: t.status === 'waiting' ? abs(2820) : null,
     blockers: t.blockers.map((b) => ({ ...b, openedAt: abs(b.openedAgo), closedAt: abs(b.closedAgo) })),
-    evidence: t.evidence.map((e) => ({ ...e, at: abs(e.atAgo) })),
+    evidence: t.evidence.map((e) => ({ ...e, at: abs(e.atAgo), timeSource: e.atAgo == null ? 'unknown' : 'first_reported' })),
   });
 
   window.FB = {
@@ -248,11 +249,14 @@
       state: 'sync_verified',
       configState: 'ready',
       codexMode: 'local',
-      codexHome: 'C:\\Users\\chenqi\\.codex',
+      codexHome: 'C:\\MockUser\\.codex',
       mcpConnected: true,
       mcpConnectedAgo: 3120,
       sessionReceivedAgo: 3000,
       syncVerifiedAgo: 2880,
+      mcpConnectedAt: LOAD - 3120,
+      sessionReceivedAt: LOAD - 3000,
+      syncVerifiedAt: LOAD - 2880,
       runtimeUpdateAvailable: false,
     },
     options: {
@@ -264,7 +268,7 @@
       dockSummaryMode: 'hover',
     },
     dataLocation: {
-      current: 'C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data',
+      current: 'C:\\MockUser\\AppData\\Local\\MockFloatboard\\data',
       restartRequired: false,
     },
     notifications: {
@@ -288,7 +292,14 @@
     weixin: { status: 'bound', recipientMasked: 'c****@wx', lastSentAgo: 1320, lastTestStatus: 'accepted' },
   };
 
-  /* 由真实计时字段还原的时间线条目 —— 不是新增的“动态流水”数据源。 */
+  // 完整样例提供区间；“部分计时”场景会显式移除未知历史。
+  for (const t of window.FB.tasks) {
+    for (const s of t.plan) {
+      s.segments = s.startedAt ? [{ startedAt: s.startedAt, endedAt: s.endedAt }] : [];
+    }
+  }
+
+  /* 由模拟计时字段还原的条目，不是新增的“动态流水”数据源。 */
   window.FB.timeline = function (tasks) {
     const out = [];
     for (const t of tasks) {

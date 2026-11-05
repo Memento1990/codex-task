@@ -36,24 +36,24 @@ a{color:inherit}
   white-space:nowrap;transition:background .12s,color .12s}
 .screen-dock button:hover{background:#1a2027;color:var(--fg2)}
 .screen-dock button.on{background:#e8edf3;color:#0b0d10;font-weight:600}
-.screen-dock .sep{width:1px;background:#262c34;margin:4px 3px}
+.screen-dock .sep{width:1px;background:#262c34;margin:4px 3px;flex:none}
+.screen-dock{max-width:calc(100vw - 24px);overflow-x:auto}
+.screen-dock button{flex:none}
 
 /* ── 窗口外壳 ───────────────────────────────────────────── */
 .win{background:var(--panel);border:1px solid var(--line2);border-radius:10px;overflow:hidden;
   display:flex;flex-direction:column;box-shadow:0 24px 60px -12px #000d,0 0 0 1px #0006}
 .win.wide{width:980px;height:680px}
-.win.narrow{width:392px;height:640px}
+.win.narrow{width:392px;height:570px}
 /* 窄窗工具栏：标题与连接徽标不换行，副标题让位，剩余空间全部给操作按钮。 */
 .win.narrow .bar{gap:7px;padding:0 2px 0 10px}
 .win.narrow .bar h1{white-space:nowrap;flex:none}
-.win.narrow .bar .conn{white-space:nowrap;flex:none;overflow:hidden;text-overflow:ellipsis;max-width:112px}
+.win.narrow .bar .conn{white-space:nowrap;flex:none;overflow:hidden;text-overflow:ellipsis;max-width:84px}
 .win.narrow .bar .tools{flex:none}
 .win.narrow .wctl button{width:30px}
 .win.narrow .stat .k{font-size:8px;letter-spacing:.06em}
 .win.narrow .doneband{padding:0 10px;font-size:9px}
 .win.narrow .doneband button[data-screen]{margin-left:6px}
-.win.utility{width:560px;height:640px}
-.win.history{width:820px;height:620px}
 
 /* 工具栏 */
 .bar{height:38px;flex:none;display:flex;align-items:center;gap:10px;padding:0 8px 0 12px;
@@ -97,6 +97,7 @@ a{color:inherit}
 .distbar i.r{background:var(--blue)} .distbar i.b{background:var(--red)}
 .distbar i.w{background:var(--amber)} .distbar i.d{background:var(--green)}
 .distbar i.u{background:#3a424c}
+.distbar i.c{background:var(--violet)}
 .dist .legend{display:flex;gap:12px;font-family:var(--mono);font-size:9px;color:var(--dim)}
 .dist .legend span{display:flex;align-items:center;gap:4px}
 .dist .legend b{width:6px;height:6px;border-radius:1px;display:block}
@@ -121,7 +122,7 @@ a{color:inherit}
 .row.sel .stripe{opacity:1}
 .stripe.blocked{background:var(--red)} .stripe.running{background:var(--blue)}
 .stripe.waiting{background:var(--amber)} .stripe.done{background:var(--green)}
-.stripe.unknown{background:#3a424c}
+.stripe.unknown{background:#3a424c} .stripe.cancelled{background:var(--violet)}
 .row .name{padding-left:16px;min-width:0}
 .row .name b{display:block;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;letter-spacing:.01em}
@@ -132,7 +133,7 @@ a{color:inherit}
 .pbar i{display:block;height:100%;border-radius:2px;transition:width .3s}
 .pbar i.blocked{background:var(--red)} .pbar i.running{background:var(--blue)}
 .pbar i.waiting{background:var(--amber)} .pbar i.done{background:var(--green)}
-.pbar i.unknown{background:#3a424c}
+.pbar i.unknown{background:#3a424c} .pbar i.cancelled{background:var(--violet)}
 .prog .n{font-family:var(--mono);font-size:9.5px;color:var(--dim);display:flex;justify-content:space-between}
 .row .step{padding-left:12px;font-size:11px;color:var(--fg2);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
@@ -178,9 +179,10 @@ a{color:inherit}
 .evrow .ico{font-family:var(--mono);color:var(--dim2);font-size:10px}
 .evrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .evrow em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--dim2)}
-.evrow a{color:var(--blue);font-family:var(--mono);font-size:10px;text-decoration:none;
+.evrow button{color:var(--blue);font-family:var(--mono);font-size:10px;text-decoration:none;
   border-bottom:1px dotted #3a5568}
 .empty{padding:14px 2px;color:var(--dim2);font-size:11px}
+.expand-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:14px;font-family:var(--mono);font-size:10px;color:var(--fg2)}
 
 /* 页脚 */
 .foot{flex:none;height:29px;border-top:1px solid var(--line);display:flex;align-items:center;
@@ -210,133 +212,33 @@ a{color:inherit}
 .win.narrow .row .step,.win.narrow .row .blk{display:none}
 .win.narrow .expand{grid-template-columns:1fr;gap:0;padding:0 10px 12px 12px}
 
-/* ── 独立窗口（设置/接入/通知/更新/修复） ──────────────── */
-.ubar{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;
-  border-bottom:1px solid var(--line);background:var(--panel2)}
-.ubar strong{font-size:11.5px;font-weight:600}
-.ubar small{font-family:var(--mono);font-size:9px;color:var(--dim2);border:1px solid var(--line2);
-  padding:1px 5px;border-radius:3px}
-.ubody{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:16px}
-/* 滚动容器里的分区不得被压缩，否则行内容会互相叠压。 */
-.ubody>*{flex:none}
-.sec{border:1px solid var(--line);border-radius:5px;overflow:hidden}
-.sec>h3{margin:0;padding:9px 12px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--dim2);background:var(--panel2);border-bottom:1px solid var(--line)}
-.sec>h3 span{float:right;color:var(--dim2);letter-spacing:0;text-transform:none;font-family:var(--sans);font-size:10px}
-.srow{display:flex;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid #15191e}
-.srow:last-child{border-bottom:0}
-.srow .label{flex:1;font-size:11.5px}
-.srow .label small{display:block;font-size:10px;color:var(--dim2);margin-top:1px;line-height:1.45}
-.srow code{font-family:var(--mono);font-size:10px;color:var(--dim);background:#0b0e11;
-  border:1px solid var(--line);padding:2px 6px;border-radius:3px;max-width:230px;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-.sw{width:30px;height:17px;border-radius:9px;background:#2a3038;position:relative;flex:none;
-  transition:background .15s;cursor:pointer}
-.sw::after{content:'';position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;
-  background:#8b949e;transition:transform .15s,background .15s}
-.sw.on{background:#2c4a3a}
-.sw.on::after{transform:translateX(13px);background:var(--green)}
-select,.inp{font:inherit;font-size:11px;color:var(--fg);background:#0b0e11;border:1px solid var(--line2);
-  border-radius:4px;padding:4px 7px;font-family:var(--mono)}
-.btn{font-size:11px;padding:5px 11px;border:1px solid var(--line2);border-radius:4px;background:#151a20;
-  color:var(--fg2);transition:background .1s,border-color .1s}
-.btn:hover{background:#1c222a;border-color:var(--line3);color:var(--fg)}
-.btn.pri{background:#e8edf3;border-color:#e8edf3;color:#0b0d10;font-weight:600}
-.btn.pri:hover{background:#fff}
-.btn.dan{color:var(--red);border-color:#4a2a2a}
-.btn.dan:hover{background:#2a1616}
-.btn:disabled{opacity:.45;cursor:default}
-.hint{font-size:10px;color:var(--dim2);line-height:1.6;margin:0;padding:0 12px 9px}
+/* 主视图步骤备注沿用原有样式。 */
 .note{font-family:var(--mono);font-size:10px;color:var(--dim);background:#0b0e11;border:1px solid var(--line);
   border-radius:4px;padding:7px 10px;line-height:1.6}
-.warnbox{border:1px solid #4a3a1c;background:#1a1509;border-radius:4px;padding:9px 11px;
-  font-size:10.5px;color:#d8bd83;line-height:1.6}
 
-/* 接入向导 */
-.steps{display:flex;gap:0;border:1px solid var(--line);border-radius:5px;overflow:hidden}
-.steps div{flex:1;padding:9px 12px;border-right:1px solid var(--line);position:relative}
-.steps div:last-child{border-right:0}
-.steps div .n{font-family:var(--mono);font-size:9px;color:var(--dim2)}
-.steps div .t{font-size:11px;color:var(--dim);margin-top:2px}
-.steps div.done .n{color:var(--green)} .steps div.done .t{color:var(--fg2)}
-.steps div.cur{background:#141a20}
-.steps div.cur .n{color:var(--amber)} .steps div.cur .t{color:var(--fg);font-weight:600}
-.evd{width:100%;border-collapse:collapse;font-size:11px}
-.evd td{padding:7px 12px;border-bottom:1px solid #15191e;vertical-align:top}
-.evd tr:last-child td{border-bottom:0}
-.evd td:first-child{width:96px;color:var(--dim2);font-size:10px}
-.evd td:last-child{color:var(--fg2);font-family:var(--mono);font-size:10px;text-align:right;
-  white-space:nowrap}
-.evd .ok{color:var(--green)}
-
-/* 通知 */
-.chlist{display:flex;flex-direction:column}
-.ch{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #15191e}
-.ch:last-child{border-bottom:0}
-.ch .nm{flex:1;font-size:11.5px}
-.ch .nm small{display:block;font-size:10px;color:var(--dim2);margin-top:1px}
-.pill{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;border:1px solid var(--line2);
-  color:var(--dim);white-space:nowrap}
-.pill.ok{color:var(--green);border-color:#274a34}
-.pill.bad{color:var(--red);border-color:#4a2a2a}
-.pill.off{color:var(--dim2)}
-.recs{width:100%;border-collapse:collapse;font-size:10.5px}
-.recs th{text-align:left;font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--dim2);
-  text-transform:uppercase;font-weight:400;padding:7px 12px;border-bottom:1px solid var(--line)}
-.recs td{padding:7px 12px;border-bottom:1px solid #15191e;color:var(--fg2)}
-.recs tr:last-child td{border-bottom:0}
-.recs td.t{font-family:var(--mono);font-size:9.5px;color:var(--dim2);white-space:nowrap}
-.recs td.s{text-align:right}
-
-/* 头像球 */
-.desktop{width:100%;max-width:980px;height:520px;border-radius:10px;position:relative;overflow:hidden;
-  background:radial-gradient(120% 90% at 18% 8%,#1b2430 0%,#101620 42%,#080a0d 100%);
-  border:1px solid var(--line2);display:grid;place-items:center}
-.desktop .fake{font-family:var(--mono);font-size:10px;color:#26303a;letter-spacing:.24em;text-transform:uppercase}
-.ball{position:absolute;right:18px;top:50%;transform:translateY(-50%);width:58px;height:58px;
-  display:grid;place-items:center;cursor:pointer}
-.ball svg{width:58px;height:58px;overflow:visible}
-.ball .track{fill:none;stroke:#232b34;stroke-width:4}
-.ball .ring{fill:none;stroke:var(--blue);stroke-width:4;stroke-linecap:round;transform:rotate(-90deg);
-  transform-origin:29px 29px;transition:stroke-dasharray .4s}
-.ball .ring.attn{stroke:var(--red)}
-.ball .core{fill:#141a21;stroke:#2a333d;stroke-width:1}
-.ball .g{font-family:var(--mono);font-size:13px;font-weight:600;fill:var(--fg);text-anchor:middle;
-  dominant-baseline:central;letter-spacing:-.03em}
-.ball .badge{position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;border-radius:8px;
-  background:var(--red);color:#0b0d10;font:700 9px/15px var(--mono);text-align:center;padding:0 3px;
-  border:2px solid #0a0d11}
-.ball-sum{position:absolute;right:84px;top:50%;transform:translateY(-50%);width:250px;
-  background:#0e1217f2;border:1px solid #2a333d;border-radius:7px;padding:10px 12px;
-  box-shadow:0 14px 34px #000a;backdrop-filter:blur(10px)}
-.ball-sum::after{content:'';position:absolute;right:-5px;top:50%;width:8px;height:8px;
-  background:#0e1217;border-right:1px solid #2a333d;border-top:1px solid #2a333d;
-  transform:translateY(-50%) rotate(45deg)}
-.ball-sum .h{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--dim2);
-  text-transform:uppercase;margin-bottom:5px}
-.ball-sum .t{font-size:11.5px;color:var(--fg);line-height:1.45;margin-bottom:6px}
-.ball-sum .m{font-family:var(--mono);font-size:9.5px;color:var(--dim);line-height:1.7}
-.ball-sum .m b{color:var(--red);font-weight:600}
-.desk-label{position:absolute;left:16px;top:14px;font-family:var(--mono);font-size:9px;
-  letter-spacing:.18em;color:#39444f;text-transform:uppercase}
-
-/* 完成记录 */
-.hist-head{flex:none;display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
-.hist-head .big{font-family:var(--mono);font-size:11px;color:var(--dim)}
-.hist-head .big b{color:var(--green);font-size:14px}
-.hist-body{flex:1;overflow-y:auto;padding:0}
-.hday{position:sticky;top:0;background:#0c0f13;padding:7px 16px;font-family:var(--mono);font-size:9px;
-  letter-spacing:.1em;color:var(--dim2);border-bottom:1px solid var(--line);
-  border-top:1px solid var(--line);text-transform:uppercase;z-index:1}
-.hrow{display:grid;grid-template-columns:16px 1fr auto auto;gap:12px;align-items:center;
-  padding:10px 16px;border-bottom:1px solid #15191e;cursor:pointer}
-.hrow:hover{background:#111519}
-.hrow .ck{color:var(--green);font-family:var(--mono);font-size:11px}
-.hrow .tt{font-size:12px;color:var(--fg2)}
-.hrow .tt small{display:block;font-family:var(--mono);font-size:9.5px;color:var(--dim2);margin-top:1px}
-.hrow .n{font-family:var(--mono);font-size:10px;color:var(--dim);text-align:right}
-.hrow .ev{font-family:var(--mono);font-size:9.5px;color:var(--blue)}
+[data-theme="light"] ::-webkit-scrollbar-thumb{background:var(--line2)}
+[data-theme="light"] .screen-dock{background:var(--panel);border-color:var(--line2)}
+[data-theme="light"] .screen-dock .sep{background:var(--line2)}
+[data-theme="light"] .screen-dock button:hover,
+[data-theme="light"] .ibtn:hover,
+[data-theme="light"] .wctl button:not(.x):hover,
+[data-theme="light"] .row:hover{background:var(--panel2)}
+[data-theme="light"] .screen-dock button.on{background:var(--fg);color:var(--panel)}
+[data-theme="light"] .bar .mark{color:var(--panel)}
+[data-theme="light"] .row.sel{background:var(--panel3)}
+[data-theme="light"] .expand,
+[data-theme="light"] .doneband,
+[data-theme="light"] .note{background:var(--panel2)}
+[data-theme="light"] .bcard{background:var(--panel)}
+[data-theme="light"] .pbar,
+[data-theme="light"] .distbar{background:var(--line)}
+[data-theme="light"] .row .blk.none,
+[data-theme="light"] .step-row.pending .m{color:var(--dim2)}
+[data-theme="light"] .evrow{border-bottom-color:var(--line)}
+[data-theme="light"] .evrow button{border-bottom-color:var(--blue)}
+[data-theme="light"] .doneband button:hover{color:var(--fg)}
 </style>
+<link rel="stylesheet" href="shared/mock.css">
 </head>
 <body>
 <div class="proto">
@@ -351,13 +253,12 @@ select,.inp{font:inherit;font-size:11px;color:var(--fg);background:#0b0e11;borde
 
 <script src="shared/data.js"></script>
 <script src="shared/kit.js"></script>
+<script src="shared/mock.js"></script>
 <script>
 const K = KIT, FB = window.FB;
-const S = { screen: 'main', sel: 'pay', showDone: false, tab: 'channels', integStep: 3, theme: 'dark' };
+const S = { screen: 'main', sel: 'pay', showDone: false, theme: 'dark' };
 /* 支持 #screen 直接定位，便于逐屏校对与分享。 */
 if (location.hash.length > 1) S.screen = location.hash.slice(1);
-const stat = { enabled: true, dock: true, taskbar: false, autostart: false, seconds: 3, summary: 'hover' };
-const opts = { ch: { wechat: true, wecom: true, feishu: false }, sub: { blocker_opened: true, task_completed: true, blocker_resolved: false } };
 
 const SCREENS = [
   ['main','主窗 980'], ['narrow','窄窗 392'], ['dock','贴边头像球'], ['|', ''],
@@ -384,22 +285,23 @@ function bar(title, conn, tools) {
     <div class="spacer"></div>
     <div class="tools">${tools}</div>
     <div class="wctl">
-      <button title="最小化">${ic('min')}</button>
-      <button title="最大化">${ic('max')}</button>
-      <button class="x" title="关闭到托盘">${ic('close')}</button>
+      <button title="最小化" data-mock="minimize">${ic('min')}</button>
+      <button title="最大化" data-mock="maximize">${ic('max')}</button>
+      <button class="x" title="关闭到托盘" data-mock="close">${ic('close')}</button>
     </div>
   </div>`;
 }
 
 function counts() {
-  const ts = FB.tasks, now = FB.now();
-  const act = ts.filter(t => t.status !== 'completed' && t.status !== 'unreported');
+  const ts = FB.tasks;
+  const act = ts.filter(t => !['completed','cancelled','unreported'].includes(t.status));
   return {
     running: act.filter(t => t.status === 'running' && !K.openBlockers(t).length).length,
-    blocked: ts.filter(t => K.openBlockers(t).length).length,
-    waiting: act.filter(t => t.status === 'waiting').length,
+    blocked: act.filter(t => K.openBlockers(t).length).length,
+    waiting: act.filter(t => t.status === 'waiting' && !K.openBlockers(t).length).length,
     done: ts.filter(t => t.status === 'completed').length,
     unreported: ts.filter(t => t.status === 'unreported').length,
+    cancelled: ts.filter(t => t.status === 'cancelled').length,
     total: ts.length,
     blockers: ts.reduce((n, t) => n + K.openBlockers(t).length, 0),
   };
@@ -408,7 +310,7 @@ function counts() {
 function overview() {
   const c = counts();
   const seg = [
-    ['r', c.running], ['b', c.blocked], ['w', c.waiting], ['d', c.done], ['u', c.unreported],
+    ['r', c.running], ['b', c.blocked], ['w', c.waiting], ['d', c.done], ['u', c.unreported], ['c', c.cancelled],
   ];
   const pctOf = (n) => (n / c.total * 100).toFixed(2) + '%';
   return `<div class="overview">
@@ -424,6 +326,8 @@ function overview() {
         <span><b style="background:var(--red)"></b>受阻</span>
         <span><b style="background:var(--amber)"></b>待确认</span>
         <span><b style="background:var(--green)"></b>完成</span>
+        ${c.unreported ? `<span><b style="background:#3a424c"></b>未汇报 ${c.unreported}</span>` : ''}
+        ${c.cancelled ? `<span><b style="background:var(--violet)"></b>已取消 ${c.cancelled}</span>` : ''}
       </div>
     </div>
   </div>`;
@@ -443,7 +347,7 @@ function rowHTML(t, narrow) {
       <div class="n"><span>${d}/${t.plan.length || 0}${t.plan.length ? '' : ' 步骤'}</span><span>${Math.round(p * 100)}%</span></div></div>
     <div class="step">${K.esc(t.currentStep || (t.status === 'completed' ? '—' : '等待下一步进展'))}<em>${ob.length ? ob[0].title : K.STATUS[t.status]}</em></div>
     <div class="blk ${ob.length ? 'has' : 'none'}">${ob.length ? '! ' + ob.length : '—'}</div>
-    <div class="time ${t.status !== 'completed' ? 'live' : ''}">${K.fmtCompact(el)}</div>
+    <div class="time ${t.status !== 'completed' ? 'live' : ''}" title="${t.timing?.partial ? '部分计时记录' : '自然耗时'}">${t.timing?.partial ? '≥ ' : ''}<span data-live-elapsed="${t.id}">${K.fmtCompact(el)}</span></div>
   </div>${sel ? expandHTML(t) : ''}`;
 }
 
@@ -454,11 +358,11 @@ function expandHTML(t) {
   const steps = t.plan.map(s => `<div class="step-row ${s.status}">
       <span class="m">${K.STEPMARK[s.status] || '·'}</span>
       <span class="t">${K.esc(s.title)}</span>
-      <span class="tm">${s.endedAt && s.startedAt ? K.fmtCompact(s.endedAt - s.startedAt) : s.status === 'inProgress' && s.startedAt ? K.fmtCompact(now - s.startedAt) : ''}</span>
+      <span class="tm">${s.timing ? K.fmtCompact(K.elapsed(s)) + (s.timing.partial ? ' · 部分' : '') : s.endedAt && s.startedAt ? K.fmtCompact(s.endedAt - s.startedAt) : s.status === 'inProgress' && s.startedAt ? K.fmtCompact(now - s.startedAt) : ''}</span>
       ${s.note ? `<div class="note">${K.esc(s.note)}</div>` : ''}
     </div>`).join('');
-  const bcards = [...ob, ...closed].map(b => `<div class="bcard" style="${b.open ? '' : 'border-left-color:#3a424c;opacity:.62'}">
-      <div class="bt"><span>${K.esc(b.title)}</span><em style="${b.open ? '' : 'color:#7d8894'}">${b.open ? '+' + K.fmtCompact(now - b.openedAt) : '已解除'}</em></div>
+  const bcards = [...ob, ...closed].map(b => `<div class="bcard" data-blocker-id="${b.id}" style="${b.open ? '' : 'border-left-color:#3a424c;opacity:.62'}">
+      <div class="bt"><span>${K.esc(b.title)}</span><em style="${b.open ? '' : 'color:#7d8894'}">${b.open ? '<span data-live-blocker="' + b.id + '">' + (b.openedAt ? K.fmtCompact(now - b.openedAt) : '时间未记录') + '</span>' : '已解除'}</em></div>
       <dl>
         <dt>原因</dt><dd>${K.esc(b.reason)}</dd>
         ${b.impact ? `<dt>影响</dt><dd>${K.esc(b.impact)}</dd>` : ''}
@@ -466,265 +370,62 @@ function expandHTML(t) {
         <dt>解除</dt><dd>${K.esc(b.resolveWhen)}</dd>
       </dl>
     </div>`).join('');
-  const evs = t.evidence.map(e => `<div class="evrow"><span class="ico">◇</span><span title="${K.esc(e.reference)}">${K.esc(e.label)}</span><em>${K.ago(e.at, now)}</em><a href="#" onclick="return false">打开</a></div>`).join('');
+  const evs = t.evidence.map(e => `<div class="evrow"><span class="ico">◇</span><span title="${K.esc(e.reference)}">${K.esc(e.label)}</span><em>${e.at ? K.ago(e.at, now) : '时间未知'}</em><button data-mock="evidence" data-task="${t.id}" data-evidence="${e.id}">打开</button></div>`).join('');
   return `<div class="expand">
     <div><div class="col-h"><span>清单</span><span>${K.doneSteps(t)}/${t.plan.length}</span></div>${steps || '<div class="empty">尚未汇报清单</div>'}</div>
     <div><div class="col-h"><span>卡点</span><span>${ob.length} 未解除</span></div>${bcards || '<div class="empty">暂无已汇报卡点</div>'}</div>
     <div><div class="col-h"><span>验收证据</span><span>${t.evidence.length}</span></div>${evs || '<div class="empty">暂无验收证据</div>'}</div>
+    <div class="expand-actions"><button data-mock="detail" data-task="${t.id}">任务详情 ↗</button>${!['completed','cancelled','unreported'].includes(t.status) ? `<button data-mock="advance" data-task="${t.id}">推进任务 ▸</button>` : ''}</div>
   </div>`;
 }
 
 function mainScreen(narrow) {
-  const active = FB.tasks.filter(t => t.status !== 'completed');
-  const shown = active.filter(t => t.status !== 'unreported' || t.plan.length);
   const done = FB.tasks.filter(t => t.status === 'completed');
-  const list = S.showDone ? [...shown, ...done] : shown;
+  const list = MOCK.tasks({ includeCompleted: S.showDone }).filter(t => S.showDone || MOCK.includeCompleted() || t.status !== 'completed');
   const rows = list.map(t => rowHTML(t, narrow)).join('');
   const c = counts();
   return `<div class="win ${narrow ? 'narrow' : 'wide'}">
-    ${bar(narrow ? '巡检台' : '巡检台', { text: 'CODEX · 同步已验证' },
-      `<button class="ibtn" title="搜索结果">${ic('search')}</button>
-       <button class="ibtn on" title="收起为头像球">${ic('dock')}</button>
-       <button class="ibtn" title="设置">${ic('gear')}</button>
-       <button class="ibtn" title="更多">${ic('more')}</button>`)}
+    ${bar(narrow ? '巡检台' : '巡检台', { text: MOCK.connectionLabel() },
+      `<button class="ibtn" title="搜索任务或命令" data-mock="palette">${ic('search')}</button>
+       <button class="ibtn on" title="收起为头像球" data-mock="dock">${ic('dock')}</button>
+       <button class="ibtn" title="设置" data-screen="settings">${ic('gear')}</button>
+       <button class="ibtn" title="更多" data-mock="palette">${ic('more')}</button>`)}
     ${overview()}
+    ${MOCK.toolbar()}
     <div class="grid-head"><span>任务</span><span>进度</span><span>当前步骤</span><span>卡点</span><span>耗时</span></div>
-    <div class="rows">${rows}</div>
+    <div class="rows">${rows || '<div class="empty">无匹配任务</div>'}</div>
     <div class="doneband">
       <b>✓ ${done.length}</b> 项已完成
       <button data-toggle-done="1">${S.showDone ? '收起已完成' : '在表中显示 ↗'}</button>
       <button data-screen="completed" style="margin-left:14px">完成记录 ↗</button>
     </div>
     <div class="foot"><span>共 ${c.total} 个任务 · 完成 ${c.done} · ${c.blockers} 个未解除卡点</span>
-      <span class="r"><button>复制会话 ID</button><span>0.14.1</span></span></div>
+      <span class="r"><button data-mock="copy-session">复制会话 ID</button><span>0.14.1</span></span></div>
   </div>`;
 }
 
 function dockScreen() {
-  return `<div class="desktop">
-    <span class="desk-label">桌面 · 屏幕右缘</span>
-    <div class="fake">prototype desktop</div>
-    <div class="ball">
-      <svg viewBox="0 0 58 58">
-        <circle class="track" cx="29" cy="29" r="25"/>
-        <circle class="ring attn" cx="29" cy="29" r="25" pathLength="100"
-          stroke-dasharray="43 100" stroke-dashoffset="0"/>
-        <circle class="core" cx="29" cy="29" r="19"/>
-        <text class="g" x="29" y="30">3/7</text>
-      </svg>
-      <span class="badge">3</span>
-    </div>
-    <div class="ball-sum">
-      <div class="h">当前任务</div>
-      <div class="t">支付重构 · webhook 签名迁移</div>
-      <div class="m">3/7 步骤 · 迁移 webhook 签名校验<br><b>3 个未解除卡点</b> · 3 个任务在跑<br>点击恢复面板</div>
-    </div>
-  </div>`;
-}
-
-function completedScreen() {
-  const done = FB.tasks.filter(t => t.status === 'completed');
-  const now = FB.now();
-  const rows = done.map(t => `<div class="hrow">
-      <span class="ck">✓</span>
-      <div class="tt">${K.esc(t.title)}<small>${K.esc(t.tag)} · ${t.plan.length} 个步骤全部完成</small></div>
-      <div class="n">${K.fmtCompact((t.endedAt || now) - (t.startedAt || now))}</div>
-      <div class="ev">${t.evidence.length} 证据 ↗</div>
-    </div>`).join('');
-  return `<div class="win history">
-    ${bar('完成记录', { text: '只读 · 2 项' },
-      `<button class="ibtn" title="关闭">${ic('close')}</button>`)}
-    <div class="hist-head"><span class="big"><b>${done.length}</b> 已完成任务</span>
-      <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim2)">主窗保持紧凑，完成项独立归档</span></div>
-    <div class="hist-body">
-      <div class="hday">今天 · ${new Date().toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit'})}</div>
-      ${rows}
-    </div>
-    <div class="foot"><span>点击任意行查看完整清单与证据</span><span class="r"><span>0.14.1</span></span></div>
-  </div>`;
-}
-
-function settingsScreen() {
-  const rows = [
-    ['开机自启', '登录 Windows 后自动启动看板', 'sw', 'autostart'],
-    ['在任务栏中显示', '关闭时仅保留托盘图标', 'sw', 'taskbar'],
-    ['消息浮窗通知', '任务与清单变化时在屏幕角落提醒', 'sw', 'enabled'],
-    ['通知停留时长', '普通通知按此秒数自动关闭；卡点通知常驻', 'num', 'seconds'],
-    ['头像球摘要', '鼠标移到贴边头像时显示的摘要密度', 'sel', 'summary'],
-  ];
-  const ctrl = (r) => {
-    const [label, hint, kind, key] = r;
-    if (kind === 'sw') return `<div class="sw ${stat[key] ? 'on' : ''}" data-toggle="${key}"></div>`;
-    if (kind === 'num') return `<input class="inp" style="width:52px;text-align:right" value="${stat.seconds}"> <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)">秒</span>`;
-    return `<select><option>固定显示任务摘要</option><option selected>鼠标移到头像上显示</option><option>不显示任务摘要</option></select>`;
-  };
-  return `<div class="win utility">
-    ${bar('看板设置', { text: '独立窗口 · 始终置顶' }, '')}
-    <div class="ubody">
-      <div class="sec"><h3>外观与启动</h3>
-        ${rows.map(r => `<div class="srow"><div class="label">${r[0]}<small>${r[1]}</small></div>${ctrl(r)}</div>`).join('')}
-      </div>
-      <div class="sec"><h3>数据目录</h3>
-        <div class="srow"><div class="label"><small style="margin:0">当前目录</small><code style="margin-top:4px;display:inline-block">C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data</code></div>
-          <button class="btn">打开</button></div>
-        <div class="srow"><div class="label">迁移到<small>离线复制与切换，不是在线热迁移</small></div><input class="inp" style="width:200px" placeholder="输入新的完整目录路径"></div>
-        <p class="hint">迁移前先用新版重新连接，完整退出所有 Codex 会话并暂停上报。旧目录必须保留用于路径重定向。</p>
-      </div>
-      <div class="sec"><h3>外部消息渠道 <span>微信 / 企微 / 飞书</span></h3>
-        <div class="srow"><div class="label">独立于浮窗通知<small>外部渠道有自己的开关与事件订阅，不受浮窗设置影响</small></div>
-          <button class="btn" data-screen="notifications">配置消息通知 ↗</button></div>
-      </div>
-      <div class="sec"><h3>修复任务记录</h3>
-        <div class="srow"><div class="label">可尝试恢复任务记录<small>原始记录会保留，Codex 与进行中的会话不会被强行结束</small></div>
-          <button class="btn" data-screen="repair">修复并重启…</button></div>
-      </div>
-      <div class="sec"><h3>版本</h3>
-        <div class="srow"><div class="label">当前版本 0.14.1<small>自动检查与下载，安装前始终需要确认</small></div>
-          <button class="btn" data-screen="updates">检查更新 ↗</button></div>
-      </div>
-    </div>
-    <div class="foot"><span>设置改动即时保存</span><span class="r"><button>关闭</button></span></div>
-  </div>`;
-}
-
-function integrationScreen() {
-  const con = FB.connection, now = FB.now();
-  const steps = [['配置写入','本工具配置已写入'],['连接回执','Codex 已加载连接组件'],['会话与同步','任务同步已验证']];
-  return `<div class="win utility">
-    ${bar('Codex 接入', { text: 'DEV · 本机 Codex' }, '')}
-    <div class="ubody">
-      <div class="steps">${steps.map((s, i) => `<div class="${i < 3 ? 'done' : ''} ${i === 2 ? 'cur' : ''}">
-          <div class="n">${String(i + 1).padStart(2, '0')} ${i < 2 ? '✓' : '●'}</div><div class="t">${s[0]}</div></div>`).join('')}</div>
-      <div class="note" style="border-color:#274a34;color:#8fd6a6">✓ 接入与任务同步已验证 —— 已收到真实任务汇报。该回执不代表 Codex 此刻实时在线。</div>
-      <div class="sec"><h3>分层证据</h3>
-        <table class="evd">
-          <tr><td>配置写入</td><td>本工具配置已写入</td><td class="ok">✓</td></tr>
-          <tr><td>Codex 授权</td><td>工具无法直接读取，请在 Codex 确认</td><td>—</td></tr>
-          <tr><td>组件回执</td><td>已确认过连接 · 非心跳</td><td class="ok">${K.fmtDateTime(now - con.mcpConnectedAgo)}</td></tr>
-          <tr><td>会话事件</td><td>会话事件已收到</td><td class="ok">${K.fmtDateTime(now - con.sessionReceivedAgo)}</td></tr>
-          <tr><td>任务同步</td><td>任务同步已验证</td><td class="ok">${K.fmtDateTime(now - con.syncVerifiedAgo)}</td></tr>
-        </table>
-      </div>
-      <div class="sec"><h3>当前 CODEX_HOME</h3>
-        <div class="srow"><code style="max-width:none">C:\\Users\\chenqi\\.codex</code>
-          <span class="pill ok" style="margin-left:auto">本机 Codex</span></div>
-      </div>
-      <div class="sec"><h3>让正在做的任务显示到看板</h3>
-        <div class="srow" style="flex-direction:column;align-items:stretch;gap:6px">
-          <div class="label" style="font-size:11px;color:var(--fg2)">1. 复制同步指令　2. 回到 Codex 当前对话粘贴发送　3. 回来确认任务出现</div>
-          <div style="display:flex;gap:8px"><button class="btn">复制同步指令</button>
-            <button class="btn pri">刷新状态</button></div>
-        </div>
-      </div>
-      <div class="warnbox">断开连接仅移除仍属于本工具的条目，保留全部任务数据。不会删除 Codex 的其它配置。</div>
-    </div>
-    <div class="foot"><span>恢复旧版连接不会覆盖陌生配置</span><span class="r"><button class="btn dan">断开连接…</button><button>关闭</button></span></div>
-  </div>`;
-}
-
-function notificationsScreen() {
-  const n = FB.notifications, now = FB.now();
-  const chs = n.channels.map(c => {
-    const on = c.id === 'feishu' ? opts.ch.feishu : true;
-    const state = c.id === 'wechat' ? (on ? '已绑定 · 已启用' : '已绑定 · 未启用')
-      : c.id === 'wecom' ? (on ? '已配置 · 不代表测试通过' : '已配置 · 已停用') : '未配置';
-    return `<div class="ch"><div class="nm">${c.name}<small>${state}</small></div>
-      <span class="pill ${on && c.configured ? 'ok' : 'off'}">${c.configured ? '已配置' : '未配置'}</span>
-      <div class="sw ${on ? 'on' : ''}" data-ch="${c.id}"></div></div>`;
-  }).join('');
-  const recs = n.records.map(r => {
-    const tone = r.status === 'sent' ? 'ok' : r.status === 'failed' ? 'bad' : 'off';
-    const label = r.status === 'sent' ? '平台已受理' : r.status === 'failed' ? '投递失败' : '未投递';
-    return `<tr><td class="t">${K.ago(now - r.atAgo, now)}</td>
-      <td>${r.channel === 'wechat' ? '微信' : r.channel === 'wecom' ? '企微' : '飞书'}</td>
-      <td>${r.event}</td><td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${K.esc(r.title)}</td>
-      <td class="s"><span class="pill ${tone}">${label}</span></td></tr>`;
-  }).join('');
-  return `<div class="win utility">
-    ${bar('消息通知', { text: '独立窗口 · 始终置顶' }, '')}
-    <div class="ubody">
-      <div class="note">重要进展不必守在屏幕前。外部渠道独立开关；桌面浮窗不受影响。</div>
-      <div class="sec"><h3>通知渠道 <span>${Object.values(opts.ch).filter(Boolean).length} 个已启用</span></h3>
-        <div class="chlist">${chs}</div></div>
-      <div class="sec"><h3>事件订阅</h3>
-        ${[['blocker_opened','卡点出现','需要你介入时通知'],['task_completed','任务完成','任务结束时通知'],['blocker_resolved','卡点解除','问题解决后同步状态']].map(e =>
-          `<div class="srow"><div class="label">${e[1]}<small>${e[2]}</small></div>
-           <div class="sw ${opts.sub[e[0]] ? 'on' : ''}" data-sub="${e[0]}"></div></div>`).join('')}
-      </div>
-      <div class="sec"><h3>发送记录 <span>保留最近 30 条</span></h3>
-        <table class="recs"><thead><tr><th>时间</th><th>渠道</th><th>事件</th><th>标题</th><th style="text-align:right">状态</th></tr></thead>
-        <tbody>${recs}</tbody></table></div>
-    </div>
-    <div class="foot"><span>平台受理不代表对方已读</span><span class="r"><button>关闭</button></span></div>
-  </div>`;
-}
-
-function updatesScreen() {
-  return `<div class="win utility">
-    ${bar('版本更新', { text: '独立窗口' }, '')}
-    <div class="ubody">
-      <div class="sec"><h3>当前版本 <span>0.14.1</span></h3>
-        <div class="srow"><div class="label">发现可用更新 <b style="color:var(--green);font-family:var(--mono)">0.15.0</b>
-          <small>下载完成后仍需你确认安装，不会自动重启看板</small></div>
-          <button class="btn pri">下载更新</button></div>
-        <p class="hint">更新只重启看板，不会结束 Codex 或正在进行的任务。任务数据保留。</p>
-      </div>
-      <div class="sec"><h3>更新偏好</h3>
-        <div class="srow"><div class="label">自动检查更新</div><div class="sw on"></div></div>
-        <div class="srow"><div class="label">自动下载更新<small>自动下载不会自动安装，安装前始终需要确认</small></div><div class="sw on"></div></div>
-        <p class="hint">上次检查：${K.fmtDateTime(FB.now() - 1800)}</p>
-      </div>
-      <div class="note">更新清单已使用 Ed25519 签名。Windows EXE 尚无 Authenticode 代码签名，可在发布页核对 SHA256。</div>
-    </div>
-    <div class="foot"><span></span><span class="r"><button class="btn">官方发布页面 ↗</button><button>关闭</button></span></div>
-  </div>`;
-}
-
-function repairScreen() {
-  return `<div class="win utility">
-    ${bar('修复任务记录', { text: '独立窗口' }, '')}
-    <div class="ubody">
-      <div class="note">任务记录无法正常显示时，可尝试安全修复并重启看板。原始记录会保留，Codex 和正在进行的会话不会被强行结束。</div>
-      <div class="sec"><h3>修复状态</h3>
-        <div class="srow"><div class="label">可尝试恢复任务记录<small>尚未开始。修复会先暂停写入，再用一致性快照重建，最后自动重启看板验证。</small></div></div>
-        <div class="srow"><div class="label" style="font-family:var(--mono);font-size:10px;color:var(--dim)">原始记录路径</div>
-          <code>C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data</code></div>
-      </div>
-      <div class="warnbox">部分历史记录可能无法找回；未保存的看板设置不会自动保存。请勿删除原始记录目录。</div>
-      <div style="display:flex;gap:8px"><button class="btn pri">修复并重启</button><button class="btn">取消</button></div>
-    </div>
-    <div class="foot"><span>不会强行结束 Codex</span><span class="r"><button>关闭</button></span></div>
-  </div>`;
+  return MOCK.dock('a');
 }
 
 function render() {
-  const map = {
-    main: () => mainScreen(false), narrow: () => mainScreen(true), dock: dockScreen,
-    completed: completedScreen, settings: settingsScreen, integration: integrationScreen,
-    notifications: notificationsScreen, updates: updatesScreen, repair: repairScreen,
-  };
-  document.getElementById('stage').innerHTML = (map[S.screen] || map.main)();
+  const map = { main: () => mainScreen(false), narrow: () => mainScreen(true), dock: dockScreen };
+  document.getElementById('stage').innerHTML = MOCK.utility(S.screen) || (map[S.screen] || map.main)();
   document.getElementById('dock').innerHTML = SCREENS.map(([k, label]) =>
     k === '|' ? '<span class="sep"></span>' : `<button class="${S.screen === k ? 'on' : ''}" data-screen="${k}">${label}</button>`).join('');
+  MOCK.afterRender();
 }
 
 document.addEventListener('click', (e) => {
-  const b = e.target.closest('[data-screen]');
-  if (b) { S.screen = b.dataset.screen; render(); return; }
+  if (e.target.closest('[data-mock]')) return;
   const td = e.target.closest('[data-toggle-done]');
   if (td) { S.showDone = !S.showDone; render(); return; }
-  const sw = e.target.closest('[data-toggle]');
-  if (sw) { stat[sw.dataset.toggle] = !stat[sw.dataset.toggle]; sw.classList.toggle('on'); return; }
-  const ch = e.target.closest('[data-ch]');
-  if (ch) { opts.ch[ch.dataset.ch] = !opts.ch[ch.dataset.ch]; render(); return; }
-  const sb = e.target.closest('[data-sub]');
-  if (sb) { opts.sub[sb.dataset.sub] = !opts.sub[sb.dataset.sub]; sb.classList.toggle('on'); return; }
   const row = e.target.closest('.row');
   if (row) { S.sel = S.sel === row.dataset.task ? '' : row.dataset.task; render(); }
 });
 
+MOCK.install({ variant: 'a', state: S, render, selected: () => S.sel, select: (id) => { S.sel = id; } });
 render();
-setInterval(() => { if (S.screen === 'main' || S.screen === 'narrow') render(); }, 1000);
 </script>
 </body>
 </html>

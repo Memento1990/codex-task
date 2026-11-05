@@ -1,0 +1,91 @@
+{
+  "results": [
+    {
+      "name": "connect changes configuration only before receipts",
+      "pass": true
+    },
+    {
+      "name": "connection receipts progress to verified",
+      "pass": true
+    },
+    {
+      "name": "disconnect retains task records",
+      "pass": true
+    },
+    {
+      "name": "webhook rejects invalid URL",
+      "pass": true
+    },
+    {
+      "name": "configured channel can create accepted test record",
+      "pass": true
+    },
+    {
+      "name": "channel can be disabled",
+      "pass": true
+    },
+    {
+      "name": "wechat unbind updates channel",
+      "pass": true
+    },
+    {
+      "name": "wechat presents mock scan state",
+      "pass": true
+    },
+    {
+      "name": "scan completes mock binding",
+      "pass": true
+    },
+    {
+      "name": "failure creates failed delivery",
+      "pass": true
+    },
+    {
+      "name": "failed record retry keeps record and increments attempt",
+      "pass": true
+    },
+    {
+      "name": "migration validates full path",
+      "pass": true
+    },
+    {
+      "name": "migration completes after preview/dry-run/confirmation",
+      "pass": true
+    },
+    {
+      "name": "download ends ready without automatic installation",
+      "pass": true
+    },
+    {
+      "name": "install confirmation updates simulated version and retains tasks",
+      "pass": true
+    },
+    {
+      "name": "failed repair preserves records",
+      "pass": true
+    },
+    {
+      "name": "repair reaches verified completion",
+      "pass": true
+    },
+    {
+      "name": "window sizing is interactive",
+      "pass": true
+    },
+    {
+      "name": "close produces recoverable closed state",
+      "pass": true
+    },
+    {
+      "name": "drag snaps orb to left without restoring window",
+      "pass": false
+    },
+    {
+      "name": "execution",
+      "pass": false,
+      "error": "drag snaps orb to left without restoring window"
+    }
+  ],
+  "passed": 19,
+  "total": 21
+}
