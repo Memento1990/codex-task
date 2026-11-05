@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 B · 单任务聚焦时间线 — Codex Floatboard 重设计</title>
+<style>
+:root{
+  --bg:#0a0b0d; --ink:#e6e2da; --ink2:#a8a49b; --dim:#6f6c65; --dim2:#4c4a45;
+  --line:#1d1e20; --line2:#2a2b2e; --line3:#3c3d41;
+  --amber:#e8a33d; --red:#e06a55; --green:#6fbf87; --blue:#7ba7c9; --paper:#111213;
+  --mono:ui-monospace,"JetBrains Mono","SFMono-Regular",Consolas,monospace;
+  --sans:"Inter","Segoe UI Variable","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Songti SC",Georgia,serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;font-size:12px;line-height:1.5}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-thumb{background:#2b2c2f;border-radius:4px}
+
+.proto{min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:26px 20px 88px}
+.proto-tag{width:100%;max-width:1320px;display:flex;align-items:baseline;gap:12px;
+  font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:18px}
+.proto-tag b{color:var(--ink);font-weight:600}
+.proto-tag span:nth-child(2){color:var(--dim2)}
+.proto-tag .rr{margin-left:auto}
+.stage{width:100%;max-width:1320px;display:flex;justify-content:center;gap:24px;flex-wrap:wrap}
+.screen-dock{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:90;
+  display:flex;gap:2px;padding:5px;background:#111214ee;border:1px solid #2a2b2e;border-radius:11px;
+  backdrop-filter:blur(14px);box-shadow:0 12px 32px #000b}
+.screen-dock button{font-family:var(--mono);font-size:11px;color:var(--dim);padding:6px 11px;border-radius:7px;white-space:nowrap}
+.screen-dock button:hover{background:#1c1d20;color:var(--ink2)}
+.screen-dock button.on{background:#e6e2da;color:#0b0c0e;font-weight:600}
+.screen-dock .sep{width:1px;background:#2a2b2e;margin:4px 3px}
+
+.win{background:var(--paper);border:1px solid var(--line2);border-radius:10px;overflow:hidden;
+  display:flex;flex-direction:column;box-shadow:0 26px 64px -14px #000e}
+.win.wide{width:980px;height:688px}
+.win.narrow{width:392px;height:648px}
+/* 窄窗工具栏：标题与连接状态不折行。 */
+.win.narrow .bar{gap:7px;padding:0 2px 0 11px}
+.win.narrow .bar h1{white-space:nowrap;flex:none}
+.win.narrow .bar .conn{white-space:nowrap;flex:none;overflow:hidden;text-overflow:ellipsis;max-width:108px}
+.win.narrow .wctl button{width:30px}
+.win.utility{width:560px;height:648px}
+.win.history{width:820px;height:628px}
+
+/* 标题栏更轻，字距拉开 */
+.bar{height:40px;flex:none;display:flex;align-items:center;gap:11px;padding:0 8px 0 15px;
+  border-bottom:1px solid var(--line);user-select:none}
+.bar .mark{font-family:var(--mono);font-size:11px;color:var(--amber);letter-spacing:-.06em}
+.bar h1{font-size:11px;font-weight:600;margin:0;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2)}
+.bar .conn{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;color:var(--dim);
+  letter-spacing:.04em}
+.bar .conn i{width:4px;height:4px;border-radius:50%;background:var(--green)}
+.bar .spacer{flex:1}
+.bar .tools{display:flex;gap:2px}
+.ibtn{width:27px;height:27px;display:grid;place-items:center;border-radius:4px;color:var(--dim)}
+.ibtn:hover{background:#1c1d20;color:var(--ink2)}
+.ibtn svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.wctl{display:flex}
+.wctl button{width:38px;height:40px;display:grid;place-items:center;color:var(--dim2)}
+.wctl button:hover{background:#1c1d20;color:var(--ink2)}
+.wctl button.x:hover{background:#a83f2e;color:#fff}
+.wctl svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1.2}
+
+/* ── 任务胶片条：一次只聚焦一个，横向切换 ─────────────── */
+.film{flex:none;display:flex;border-bottom:1px solid var(--line);background:#0d0e10;overflow-x:auto;
+  scrollbar-width:none}
+.film::-webkit-scrollbar{display:none}
+.film .cell{flex:none;width:148px;padding:10px 12px 11px;border-right:1px solid var(--line);
+  position:relative;cursor:pointer;transition:background .12s;min-width:0}
+.film .cell:last-child{border-right:0}
+.film .cell:hover{background:#131416}
+.film .cell.on{background:#161719}
+.film .cell.on::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--ink)}
+.film .cell .tag{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;color:var(--dim2);
+  text-transform:uppercase;display:flex;align-items:center;gap:5px;margin-bottom:4px}
+.film .cell .tag i{width:5px;height:5px;border-radius:50%;flex:none}
+.film .cell .tag i.blocked{background:var(--red)} .film .cell .tag i.running{background:var(--blue)}
+.film .cell .tag i.waiting{background:var(--amber)} .film .cell .tag i.done{background:var(--green)}
+.film .cell .tag i.unknown{background:#3c3d41}
+.film .cell .t{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink2)}
+.film .cell.on .t{color:var(--ink)}
+.film .cell .p{display:flex;align-items:center;gap:6px;margin-top:6px}
+.film .cell .p .b{flex:1;height:2px;background:#232426;border-radius:1px;overflow:hidden}
+.film .cell .p .b i{display:block;height:100%}
+.film .cell .p em{font-family:var(--mono);font-size:9px;color:var(--dim);font-style:normal}
+
+/* ── 主区：左侧时间线 + 右侧介入栏 ────────────────────── */
+.body{flex:1;display:grid;grid-template-columns:1fr 268px;min-height:0}
+.stage-col{overflow-y:auto;padding:24px 26px 26px;min-width:0}
+.hero{margin-bottom:22px}
+.hero .crumb{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--dim2);
+  text-transform:uppercase;margin-bottom:8px}
+.hero h2{font-family:var(--serif);font-size:23px;font-weight:400;line-height:1.24;margin:0 0 10px;
+  letter-spacing:-.01em;color:var(--ink)}
+.hero .meta{display:flex;flex-wrap:wrap;gap:0 18px;font-family:var(--mono);font-size:10px;color:var(--dim)}
+.hero .meta span{display:flex;align-items:center;gap:5px}
+.hero .meta b{color:var(--ink2);font-weight:500}
+.hero .meta .live{color:var(--amber)}
+
+/* 时间线 */
+.tl{position:relative;padding-left:26px}
+.tl::before{content:'';position:absolute;left:6px;top:6px;bottom:8px;width:1px;background:var(--line2)}
+.tnode{position:relative;padding-bottom:3px}
+.tnode .dot{position:absolute;left:-26px;top:4px;width:13px;height:13px;display:grid;place-items:center;
+  background:var(--paper);z-index:1}
+.tnode .dot::after{content:'';width:7px;height:7px;border-radius:50%;border:1px solid var(--line3);
+  background:var(--paper)}
+.tnode.done .dot::after{background:var(--green);border-color:var(--green)}
+.tnode.now .dot::after{background:var(--amber);border-color:var(--amber);box-shadow:0 0 0 4px #e8a33d18}
+.tnode.hold .dot::after{background:var(--red);border-color:var(--red)}
+.tnode.todo .dot::after{background:var(--paper);border-color:#34353a}
+.tnode.proof .dot::after{background:var(--paper);border-color:var(--blue);transform:rotate(45deg);border-radius:1px}
+
+.tline{display:flex;align-items:baseline;gap:10px;padding:3px 0 4px}
+.tline .t{font-size:12.5px;color:var(--ink2)}
+.tnode.done .tline .t{color:var(--dim)}
+.tnode.now .tline .t{color:var(--ink);font-weight:500}
+.tnode.hold .tline .t{color:var(--ink);font-weight:500}
+.tnode.todo .tline .t{color:var(--dim2)}
+.tline .d{font-family:var(--mono);font-size:9.5px;color:var(--dim2);margin-left:auto;white-space:nowrap}
+.tline .clock{font-family:var(--mono);font-size:9.5px;color:var(--dim2);white-space:nowrap}
+.tnote{font-size:11px;color:var(--dim2);line-height:1.6;padding:0 0 12px 0;max-width:52ch}
+.tnode.hold .tnote{color:#9d7f6a}
+
+/* 卡点作为时间线上的中断块 */
+.holdblock{margin:2px 0 14px;border:1px solid #3a2620;background:#16100e;border-radius:5px;
+  padding:11px 13px;position:relative}
+.holdblock::before{content:'';position:absolute;left:-26px;top:16px;width:26px;height:1px;background:#3a2620}
+.holdblock .hh{display:flex;align-items:baseline;gap:9px;margin-bottom:7px}
+.holdblock .hh strong{font-size:12.5px;color:#e8b9a8;font-weight:500}
+.holdblock .hh em{font-style:normal;font-family:var(--mono);font-size:9.5px;color:var(--red);
+  margin-left:auto;white-space:nowrap}
+.holdblock dl{margin:0;display:grid;grid-template-columns:52px 1fr;gap:4px 10px;font-size:10.5px;line-height:1.55}
+.holdblock dt{font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;color:#7a5f55;
+  text-transform:uppercase;padding-top:2px}
+.holdblock dd{margin:0;color:#b8a49c}
+.holdblock .who{display:inline-flex;align-items:center;gap:5px;color:#d8c3b8}
+.holdblock .who b{color:var(--amber);font-weight:500}
+
+/* 右侧介入栏 */
+.side{border-left:1px solid var(--line);background:#0d0e10;overflow-y:auto;display:flex;flex-direction:column}
+.side .sh{padding:12px 14px 9px;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
+  color:var(--dim2);text-transform:uppercase;border-bottom:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:center}
+.side .sh b{color:var(--red);font-size:9.5px;letter-spacing:0}
+/* 窄窗介入条：横向滚动的一行条目，避免半截卡片被裁。 */
+.nstrip{display:flex;overflow-x:auto;scrollbar-width:none}
+.nstrip::-webkit-scrollbar{display:none}
+.nact{flex:none;max-width:190px;display:flex;align-items:center;gap:6px;padding:7px 12px;
+  border-right:1px solid var(--line);cursor:pointer;transition:background .1s}
+.nact:hover{background:#131416}
+.nact .nDot{width:5px;height:5px;border-radius:50%;background:var(--red);flex:none}
+.nact .nl{font-size:10.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nact em{font-style:normal;font-family:var(--mono);font-size:9px;color:var(--red);flex:none}
+.act{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .1s}
+.act:hover{background:#131416}
+.act .at{font-size:11px;color:var(--ink);line-height:1.4;margin-bottom:4px}
+.act .am{font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;gap:10px}
+.act .am .w{color:var(--amber)}
+.act .bar2{height:2px;background:#232426;margin-top:7px;border-radius:1px;overflow:hidden}
+.act .bar2 i{display:block;height:100%;background:var(--red)}
+.side .sfoot{margin-top:auto;padding:10px 14px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:9px;color:var(--dim2);line-height:1.7}
+.side .sfoot b{color:var(--ink2);font-weight:500}
+
+/* 底部栏 */
+.foot{flex:none;height:30px;border-top:1px solid var(--line);display:flex;align-items:center;gap:14px;
+  padding:0 14px;font-family:var(--mono);font-size:9.5px;color:var(--dim2)}
+.foot .r{margin-left:auto;display:flex;gap:14px}
+.foot button{color:var(--dim)}
+.foot button:hover{color:var(--ink2);text-decoration:underline}
+
+/* 窄窗：时间线单列，介入栏折叠到顶部 */
+.win.narrow .body{grid-template-columns:1fr}
+.win.narrow .side{border-left:0;border-bottom:1px solid var(--line);max-height:112px;order:-1}
+.win.narrow .act{padding:8px 12px}
+.win.narrow .act .at{font-size:10.5px;margin-bottom:2px}
+.win.narrow .hero .meta{gap:0 12px;font-size:9.5px}
+.win.narrow .stage-col{padding:16px 14px 18px}
+.win.narrow .hero h2{font-size:18px}
+.win.narrow .film .cell{width:118px}
+.win.narrow .holdblock dl{grid-template-columns:46px 1fr}
+
+/* 独立窗口 */
+.ubar{height:36px;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px 0 14px;
+  border-bottom:1px solid var(--line)}
+.ubar strong{font-size:10.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
+.ubar small{font-family:var(--mono);font-size:8.5px;color:var(--dim2);border:1px solid var(--line2);
+  padding:1px 5px;border-radius:2px;letter-spacing:.04em}
+.ubody{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:18px}
+.ubody>*{flex:none}
+.sec{border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0e0f11}
+.sec>h3{margin:0;padding:9px 13px;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--dim2);border-bottom:1px solid var(--line);background:#0b0c0d;
+  display:flex;justify-content:space-between;align-items:center}
+.sec>h3 span{letter-spacing:0;text-transform:none;font-family:var(--sans);font-size:10px}
+.srow{display:flex;align-items:center;gap:12px;padding:10px 13px;border-bottom:1px solid #17181a}
+.srow:last-child{border-bottom:0}
+.srow .label{flex:1;font-size:11.5px;color:var(--ink2)}
+.srow .label small{display:block;font-size:10px;color:var(--dim2);margin-top:2px;line-height:1.5}
+.srow code{font-family:var(--mono);font-size:9.5px;color:var(--dim);background:#08090a;
+  border:1px solid var(--line);padding:2px 6px;border-radius:2px;max-width:240px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.sw{width:28px;height:16px;border-radius:8px;background:#2a2b2e;position:relative;flex:none;cursor:pointer}
+.sw::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;
+  background:#6f6c65;transition:transform .15s,background .15s}
+.sw.on{background:#2a4034}
+.sw.on::after{transform:translateX(12px);background:var(--green)}
+.btn{font-size:11px;padding:5px 11px;border:1px solid var(--line2);border-radius:3px;background:#151618;
+  color:var(--ink2)}
+.btn:hover{background:#1c1d20;color:var(--ink)}
+.btn.pri{background:var(--ink);border-color:var(--ink);color:#0b0c0e;font-weight:600}
+.btn.pri:hover{background:#fff}
+.btn.dan{color:var(--red);border-color:#3d2420}
+.btn:disabled{opacity:.4}
+.hint{font-size:10px;color:var(--dim2);line-height:1.65;margin:0;padding:0 13px 10px}
+.note{font-family:var(--mono);font-size:10px;color:var(--dim);background:#08090a;border:1px solid var(--line);
+  border-radius:3px;padding:8px 11px;line-height:1.65}
+.warnbox{border-left:2px solid #4a3a1c;background:#141109;padding:9px 12px;font-size:10.5px;
+  color:#bda580;line-height:1.6}
+select,.inp{font:inherit;font-size:11px;color:var(--ink2);background:#08090a;border:1px solid var(--line2);
+  border-radius:3px;padding:4px 7px;font-family:var(--mono)}
+.steps{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0e0f11}
+.steps div{flex:1;padding:10px 13px;border-right:1px solid var(--line)}
+.steps div:last-child{border-right:0}
+.steps .n{font-family:var(--mono);font-size:8.5px;color:var(--dim2);letter-spacing:.06em}
+.steps .t{font-size:10.5px;color:var(--dim);margin-top:3px}
+.steps div.done .n{color:var(--green)}
+.steps div.cur{background:#161310}
+.steps div.cur .n{color:var(--amber)} .steps div.cur .t{color:var(--ink);font-weight:500}
+.evd{width:100%;border-collapse:collapse;font-size:11px}
+.evd td{padding:8px 13px;border-bottom:1px solid #17181a;vertical-align:top}
+.evd tr:last-child td{border-bottom:0}
+.evd td:first-child{width:92px;color:var(--dim2);font-size:9.5px;font-family:var(--mono);letter-spacing:.04em}
+.evd td:last-child{text-align:right;font-family:var(--mono);font-size:9.5px;color:var(--dim);white-space:nowrap}
+.evd .ok{color:var(--green)}
+.pill{font-family:var(--mono);font-size:8.5px;padding:2px 6px;border-radius:2px;border:1px solid var(--line2);
+  color:var(--dim);white-space:nowrap;letter-spacing:.04em}
+.pill.ok{color:var(--green);border-color:#273d2e}
+.pill.bad{color:var(--red);border-color:#3d2420}
+.pill.off{color:var(--dim2)}
+.ch{display:flex;align-items:center;gap:11px;padding:10px 13px;border-bottom:1px solid #17181a}
+.ch:last-child{border-bottom:0}
+.ch .nm{flex:1;font-size:11.5px;color:var(--ink2)}
+.ch .nm small{display:block;font-size:9.5px;color:var(--dim2);margin-top:2px}
+.recs{width:100%;border-collapse:collapse;font-size:10.5px}
+.recs th{text-align:left;font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;color:var(--dim2);
+  text-transform:uppercase;font-weight:400;padding:8px 13px;border-bottom:1px solid var(--line)}
+.recs td{padding:8px 13px;border-bottom:1px solid #17181a;color:var(--ink2)}
+.recs tr:last-child td{border-bottom:0}
+.recs td.t{font-family:var(--mono);font-size:9px;color:var(--dim2);white-space:nowrap}
+.recs td.s{text-align:right}
+
+/* 头像球：更小的“印章”质感 */
+.desktop{width:100%;max-width:980px;height:520px;border-radius:10px;position:relative;overflow:hidden;
+  background:radial-gradient(110% 80% at 82% 50%,#1a1712 0%,#121110 40%,#080808 100%);
+  border:1px solid var(--line2);display:grid;place-items:center}
+.desktop .fake{font-family:var(--mono);font-size:10px;color:#252320;letter-spacing:.26em;text-transform:uppercase}
+.desk-label{position:absolute;left:16px;top:14px;font-family:var(--mono);font-size:8.5px;
+  letter-spacing:.18em;color:#3a3733;text-transform:uppercase}
+.stamp{position:absolute;right:20px;top:50%;transform:translateY(-50%);width:46px;height:46px;
+  cursor:pointer;display:grid;place-items:center}
+.stamp svg{width:46px;height:46px;overflow:visible}
+.stamp .outer{fill:#121110;stroke:#2e2b27;stroke-width:1}
+.stamp .arc{fill:none;stroke:var(--red);stroke-width:2.5;stroke-linecap:butt}
+.stamp .arc.calm{stroke:var(--green)}
+.stamp .num{font-family:var(--mono);font-size:12px;font-weight:600;fill:var(--ink);
+  text-anchor:middle;dominant-baseline:central}
+.stamp .badge{position:absolute;top:-4px;right:-5px;height:14px;min-width:14px;border-radius:7px;
+  background:var(--red);color:#0b0c0e;font:700 8.5px/14px var(--mono);text-align:center;padding:0 3px}
+.stamp-sum{position:absolute;right:78px;top:50%;transform:translateY(-50%);width:262px;
+  background:#141311f5;border:1px solid #2e2b27;border-radius:6px;padding:12px 14px;
+  box-shadow:0 16px 40px #000c}
+.stamp-sum .h{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;color:#6a655d;
+  text-transform:uppercase;margin-bottom:7px}
+.stamp-sum .t{font-family:var(--serif);font-size:14px;color:var(--ink);line-height:1.35;margin-bottom:8px}
+.stamp-sum .r{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;
+  color:var(--dim);padding:3px 0;border-top:1px solid #262320}
+.stamp-sum .r b{color:#d8a08e;font-weight:500}
+
+/* 完成记录 */
+.hist-head{flex:none;display:flex;align-items:baseline;gap:14px;padding:16px 20px 14px;border-bottom:1px solid var(--line)}
+.hist-head .big{font-family:var(--serif);font-size:20px;color:var(--ink)}
+.hist-head .big b{color:var(--green);font-weight:400}
+.hist-head .sub{font-family:var(--mono);font-size:9.5px;color:var(--dim2)}
+.hist-body{flex:1;overflow-y:auto}
+.hday{position:sticky;top:0;background:#0c0d0f;padding:8px 20px;font-family:var(--mono);font-size:8.5px;
+  letter-spacing:.12em;color:var(--dim2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  text-transform:uppercase;z-index:1}
+.hrow{display:grid;grid-template-columns:1fr auto auto;gap:16px;align-items:baseline;
+  padding:12px 20px;border-bottom:1px solid #17181a;cursor:pointer}
+.hrow:hover{background:#131416}
+.hrow .tt{font-size:12.5px;color:var(--ink2)}
+.hrow .tt small{display:block;font-family:var(--mono);font-size:9px;color:var(--dim2);margin-top:3px}
+.hrow .n{font-family:var(--mono);font-size:10px;color:var(--dim);text-align:right;white-space:nowrap}
+.hrow .ev{font-family:var(--mono);font-size:9.5px;color:var(--blue);white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="proto">
+  <div class="proto-tag">
+    <b>方案 B · 单任务聚焦时间线</b><span>交互模型：一次只读一个任务的生命周期，其余任务收进胶片条</span>
+    <span class="rr">原型 · 合成数据 · 非产品构建</span>
+  </div>
+  <div class="stage" id="stage"></div>
+</div>
+<nav class="screen-dock" id="dock"></nav>
+
+<script src="shared/data.js"></script>
+<script src="shared/kit.js"></script>
+<script>
+const K = KIT, FB = window.FB;
+const S = { screen: 'main', focus: 'pay', theme: 'dark' };
+if (location.hash.length > 1) S.screen = location.hash.slice(1);
+const stat = { enabled: true, dock: true, taskbar: false, autostart: false, seconds: 3 };
+const opts = { ch: { wechat: true, wecom: true, feishu: false }, sub: { blocker_opened: true, task_completed: true, blocker_resolved: false } };
+
+const SCREENS = [
+  ['main','主窗 980'], ['narrow','窄窗 392'], ['dock','贴边头像球'], ['|', ''],
+  ['completed','完成记录'], ['settings','设置'], ['integration','Codex 接入'], ['|', ''],
+  ['notifications','消息通知'], ['updates','版本更新'], ['repair','修复记录'],
+];
+
+const ICON = {
+  min:'<path d="M4 10h12"/>', max:'<rect x="4" y="4" width="12" height="12" rx="1"/>',
+  close:'<path d="m5 5 10 10M15 5 5 15"/>',
+  dock:'<circle cx="10" cy="10" r="7"/><path d="M7 8 9 10 7 12m4 0h2"/>',
+  gear:'<circle cx="10" cy="10" r="2.6"/><path d="M10 2.6v2M10 15.4v2M2.6 10h2M15.4 10h2M4.8 4.8l1.4 1.4M13.8 13.8l1.4 1.4M15.2 4.8l-1.4 1.4M6.2 13.8l-1.4 1.4"/>',
+  more:'<circle cx="4" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="10" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="10" r="1" fill="currentColor" stroke="none"/>',
+  pin:'<path d="m7 3 7 0-1 5 3 3H4l3-3V3Zm3 8v6"/>',
+};
+const ic = (n) => `<svg viewBox="0 0 20 20">${ICON[n]}</svg>`;
+
+function bar(title, conn, tools) {
+  return `<div class="bar"><span class="mark">&gt;_</span><h1>${title}</h1>
+    <span class="conn"><i></i>${conn}</span><div class="spacer"></div>
+    <div class="tools">${tools}</div>
+    <div class="wctl"><button>${ic('min')}</button><button>${ic('max')}</button><button class="x">${ic('close')}</button></div>
+  </div>`;
+}
+
+function film() {
+  // 未汇报且无清单的会话不进入主列表（与 visibleTasks 一致）。
+  const act = FB.tasks.filter(t => t.status !== 'completed' && (t.status !== 'unreported' || t.plan.length));
+  return `<div class="film">${act.map(t => {
+    const tn = K.tone(t), p = K.pct(t);
+    const color = { blocked: 'var(--red)', running: 'var(--blue)', waiting: 'var(--amber)', unknown: '#3c3d41', done: 'var(--green)' }[tn];
+    return `<div class="cell ${S.focus === t.id ? 'on' : ''}" data-focus="${t.id}">
+      <div class="tag"><i class="${tn}"></i>${K.esc(t.tag)}</div>
+      <div class="t">${K.esc(t.title.split(' · ')[0])}</div>
+      <div class="p"><div class="b"><i style="width:${p * 100}%;background:${color}"></i></div>
+        <em>${K.doneSteps(t)}/${t.plan.length}</em></div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+/* 把任务还原成一条生命周期时间线：步骤、卡点、证据按真实计时混排。 */
+function timeline(t) {
+  const now = FB.now();
+  const nodes = [];
+  for (const s of t.plan) {
+    nodes.push({ at: s.startedAt || now, kind: 'step', s });
+  }
+  for (const b of t.blockers) {
+    nodes.push({ at: b.openedAt, kind: 'blocker', b });
+  }
+  for (const e of t.evidence) {
+    if (e.at) nodes.push({ at: e.at, kind: 'evidence', e });
+  }
+  nodes.sort((a, b) => a.at - b.at);
+  // 卡点绑定到“它打开时正处于进行中/受阻”的步骤之后
+  return nodes;
+}
+
+function stageHTML(t, narrow) {
+  const now = FB.now();
+  const nodes = timeline(t);
+  const ob = K.openBlockers(t);
+  const el = K.elapsed(t);
+  let out = '';
+  for (const n of nodes) {
+    if (n.kind === 'step') {
+      const s = n.s;
+      const cls = s.status === 'completed' ? 'done' : s.status === 'inProgress' ? 'now'
+        : s.status === 'blocked' ? 'hold' : 'todo';
+      const dur = s.endedAt && s.startedAt ? K.fmtCompact(s.endedAt - s.startedAt)
+        : s.status === 'inProgress' && s.startedAt ? K.fmtCompact(now - s.startedAt) : '';
+      out += `<div class="tnode ${cls}"><span class="dot"></span>
+        <div class="tline"><span class="t">${K.esc(s.title)}</span>
+          ${dur ? `<span class="d">${dur}</span>` : ''}</div>
+        ${s.note ? `<div class="tnote">${K.esc(s.note)}</div>` : ''}
+      </div>`;
+    } else if (n.kind === 'blocker') {
+      const b = n.b;
+      if (b.open) {
+        out += `<div class="holdblock"><div class="hh"><strong>${K.esc(b.title)}</strong>
+          <em>卡住 ${K.fmtCompact(now - b.openedAt)}</em></div>
+          <dl>
+            <dt>原因</dt><dd>${K.esc(b.reason)}</dd>
+            ${b.impact ? `<dt>影响</dt><dd>${K.esc(b.impact)}</dd>` : ''}
+            <dt>处理方</dt><dd><span class="who"><b>${K.esc(b.owner)}</b></span></dd>
+            <dt>解除</dt><dd>${K.esc(b.resolveWhen)}</dd>
+          </dl></div>`;
+      } else {
+        out += `<div class="tnode done"><span class="dot"></span>
+          <div class="tline"><span class="t" style="text-decoration:line-through;opacity:.7">${K.esc(b.title)}</span>
+            <span class="d">已解除 · ${K.fmtCompact((b.closedAt || now) - b.openedAt)}</span></div></div>`;
+      }
+    } else {
+      out += `<div class="tnode proof"><span class="dot"></span>
+        <div class="tline"><span class="t">证据 · ${K.esc(n.e.label)}</span>
+          <span class="clock">${K.fmtClock(n.e.at)}</span></div>
+        <div class="tnote" style="font-family:var(--mono);font-size:9.5px">${K.esc(n.e.reference)}</div></div>`;
+    }
+  }
+  return `<div class="stage-col">
+    <div class="hero">
+      <div class="crumb">${K.esc(t.tag)} · Codex ${K.RUNTIME[t.runtime] || '—'}</div>
+      <h2>${K.esc(t.title)}</h2>
+      <div class="meta">
+        <span><b>${K.doneSteps(t)}/${t.plan.length}</b> 步骤</span>
+        <span>耗时 <b class="${t.status !== 'completed' ? 'live' : ''}">${K.fmtElapsed(el)}</b></span>
+        ${ob.length ? `<span style="color:var(--red)">${ob.length} 个未解除卡点</span>` : ''}
+        <span>${t.evidence.length} 项证据</span>
+        <span title="${K.esc(t.cwd)}">${K.esc(t.cwd.split(/[\\/]/).filter(Boolean).at(-1))}</span>
+      </div>
+    </div>
+    <div class="tl">${out}</div>
+  </div>`;
+}
+
+function sideHTML(narrow) {
+  const items = K.actionItems(FB.tasks);
+  const now = FB.now();
+  const label = (it) => (it.kind === 'blocker' ? it.blocker.title : '等待你确认');
+  const owner = (it) => (it.kind === 'blocker' ? it.blocker.owner : '你');
+  if (narrow) {
+    /* 窄窗只保留一条紧凑介入条：不截断半张卡片，也不与时间线抢高度。 */
+    return `<div class="side narrow-side">
+      <div class="sh"><span>需要介入</span><b>${items.length}</b>
+        <span style="margin-left:auto;letter-spacing:0;text-transform:none;color:var(--dim2)">最早在前</span></div>
+      <div class="nstrip">${items.map((it) => {
+        const dur = now - it.at;
+        return `<div class="nact" data-focus="${it.task.id}" title="${K.esc(label(it))}">
+          <span class="nDot"></span>
+          <span class="nl">${K.esc(label(it))}</span>
+          <em>${K.fmtCompact(dur)}</em>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }
+  const rows = items.map((it) => {
+    const t = it.task;
+    const dur = now - it.at;
+    return `<div class="act" data-focus="${t.id}">
+      <div class="at">${K.esc(label(it))}</div>
+      <div class="am"><span>${K.esc(t.title.split(' · ')[0])}</span><span class="w">${K.esc(owner(it))}</span><span>${K.fmtCompact(dur)}</span></div>
+      <div class="bar2"><i style="width:${Math.min(100, dur / 72)}%"></i></div>
+    </div>`;
+  }).join('');
+  return `<div class="side">
+    <div class="sh"><span>需要介入</span><b>${items.length}</b></div>
+    ${rows}
+    <div class="sfoot">
+      <div><b>在跑</b> ${FB.tasks.filter(t => t.status === 'running').length} 个任务</div>
+      <div><b>已完成</b> ${FB.tasks.filter(t => t.status === 'completed').length} 个任务</div>
+      <div style="margin-top:6px;color:#4a4843">排序：卡点开放时间，最早的在前</div>
+    </div>
+  </div>`;
+}
+
+function mainScreen(narrow) {
+  const t = FB.tasks.find(x => x.id === S.focus) || FB.tasks[0];
+  return `<div class="win ${narrow ? 'narrow' : 'wide'}">
+    ${bar('聚焦', '同步已验证',
+      `<button class="ibtn" title="置顶">${ic('pin')}</button>
+       <button class="ibtn" title="收起为头像球">${ic('dock')}</button>
+       <button class="ibtn" title="设置">${ic('gear')}</button>
+       <button class="ibtn" title="更多">${ic('more')}</button>`)}
+    ${film()}
+    <div class="body">${stageHTML(t, narrow)}${sideHTML(narrow)}</div>
+    <div class="foot"><span>${K.esc(t.currentStep || '—')}</span>
+      <span class="r"><button data-screen="completed">完成记录 ↗</button><button>复制会话 ID</button><span>0.14.1</span></span></div>
+  </div>`;
+}
+
+function dockScreen() {
+  return `<div class="desktop">
+    <span class="desk-label">桌面 · 屏幕右缘</span>
+    <div class="fake">prototype desktop</div>
+    <div class="stamp">
+      <svg viewBox="0 0 48 48">
+        <circle class="outer" cx="24" cy="24" r="21"/>
+        <circle class="arc" cx="24" cy="24" r="18" pathLength="100"
+          stroke-dasharray="43 100" transform="rotate(-90 24 24)"/>
+        <text class="num" x="24" y="25">3/7</text>
+      </svg>
+      <span class="badge">3</span>
+    </div>
+    <div class="stamp-sum">
+      <div class="h">需要介入</div>
+      <div class="t">支付重构 · webhook 签名迁移</div>
+      <div class="r"><span>测试环境凭据失效</span><b>你 · 22m</b></div>
+      <div class="r"><span>灰度名单未确认</span><b>产品·林 · 1h</b></div>
+      <div class="r"><span>迁移窗口等待确认</span><b>你 · 10m</b></div>
+    </div>
+  </div>`;
+}
+
+function completedScreen() {
+  const done = FB.tasks.filter(t => t.status === 'completed');
+  const now = FB.now();
+  return `<div class="win history">
+    ${bar('已完成', '只读 · 2 项', `<button class="ibtn">${ic('close')}</button>`)}
+    <div class="hist-head"><span class="big"><b>${done.length}</b> 项已完成</span>
+      <span class="sub">主窗只保留进行中的任务</span></div>
+    <div class="hist-body">
+      <div class="hday">今天</div>
+      ${done.map(t => `<div class="hrow">
+        <div class="tt">${K.esc(t.title)}<small>${K.esc(t.tag)} · ${t.plan.length} 个步骤 · ${K.esc(t.cwd.split(/[\\/]/).filter(Boolean).at(-1))}</small></div>
+        <div class="n">${K.fmtCompact((t.endedAt || now) - (t.startedAt || now))}</div>
+        <div class="ev">${t.evidence.length} 证据 ↗</div>
+      </div>`).join('')}
+    </div>
+    <div class="foot"><span>点击查看完整生命周期</span><span class="r"><span>0.14.1</span></span></div>
+  </div>`;
+}
+
+function settingsScreen() {
+  const rows = [
+    ['开机自启', '登录 Windows 后自动启动看板', 'sw', 'autostart'],
+    ['在任务栏中显示', '关闭时仅保留托盘图标', 'sw', 'taskbar'],
+    ['消息浮窗通知', '任务与清单变化时在屏幕角落提醒', 'sw', 'enabled'],
+  ];
+  return `<div class="win utility">
+    ${bar('设置', '独立窗口 · 置顶', '')}
+    <div class="ubody">
+      <div class="sec"><h3>外观与启动</h3>
+        ${rows.map(r => `<div class="srow"><div class="label">${r[0]}<small>${r[1]}</small></div>
+          <div class="sw ${stat[r[3]] ? 'on' : ''}" data-toggle="${r[3]}"></div></div>`).join('')}
+        <div class="srow"><div class="label">通知停留时长<small>卡点通知常驻，直到手动关闭</small></div>
+          <input class="inp" style="width:50px;text-align:right" value="3"> <span style="font-family:var(--mono);font-size:10px;color:var(--dim2)">秒</span></div>
+        <div class="srow"><div class="label">头像摘要</div><select><option>固定显示</option><option selected>悬停显示</option><option>不显示</option></select></div>
+      </div>
+      <div class="sec"><h3>数据目录</h3>
+        <div class="srow"><div class="label"><small style="margin:0">当前</small><code style="margin-top:5px;display:inline-block">C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data</code></div>
+          <button class="btn">打开</button></div>
+        <div class="srow"><div class="label">迁移到<small>离线复制与切换</small></div><input class="inp" style="width:190px" placeholder="新的完整目录路径"></div>
+        <p class="hint">迁移前先用新版重新连接，完整退出所有 Codex 会话并暂停上报。旧目录必须保留。</p>
+      </div>
+      <div class="sec"><h3>外部渠道</h3>
+        <div class="srow"><div class="label">微信 / 企微 / 飞书<small>独立开关，不受浮窗通知设置影响</small></div>
+          <button class="btn" data-screen="notifications">配置 ↗</button></div>
+      </div>
+      <div class="sec"><h3>修复</h3>
+        <div class="srow"><div class="label">修复任务记录<small>保留原始记录，不强行结束会话</small></div>
+          <button class="btn" data-screen="repair">修复并重启…</button></div>
+      </div>
+      <div class="sec"><h3>版本</h3>
+        <div class="srow"><div class="label">当前 0.14.1</div><button class="btn" data-screen="updates">检查更新 ↗</button></div>
+      </div>
+    </div>
+    <div class="foot"><span>改动即时保存</span><span class="r"><button>关闭</button></span></div>
+  </div>`;
+}
+
+function integrationScreen() {
+  const con = FB.connection, now = FB.now();
+  return `<div class="win utility">
+    ${bar('接入', 'DEV · 本机 Codex', '')}
+    <div class="ubody">
+      <div class="steps">
+        <div class="done"><div class="n">01 ✓</div><div class="t">配置写入</div></div>
+        <div class="done"><div class="n">02 ✓</div><div class="t">连接回执</div></div>
+        <div class="cur"><div class="n">03 ●</div><div class="t">会话与同步</div></div>
+      </div>
+      <div class="note" style="border-color:#273d2e;color:#8dbfa0">✓ 接入与任务同步已验证。该回执不代表 Codex 此刻实时在线。</div>
+      <div class="sec"><h3>分层证据</h3>
+        <table class="evd">
+          <tr><td>配置写入</td><td>本工具配置已写入</td><td class="ok">✓</td></tr>
+          <tr><td>Codex 授权</td><td>无法直接读取，请在 Codex 确认</td><td>—</td></tr>
+          <tr><td>组件回执</td><td>已确认过连接 · 非心跳</td><td class="ok">${K.fmtDateTime(now - con.mcpConnectedAgo)}</td></tr>
+          <tr><td>会话事件</td><td>会话事件已收到</td><td class="ok">${K.fmtDateTime(now - con.sessionReceivedAgo)}</td></tr>
+          <tr><td>任务同步</td><td>任务同步已验证</td><td class="ok">${K.fmtDateTime(now - con.syncVerifiedAgo)}</td></tr>
+        </table>
+      </div>
+      <div class="sec"><h3>本机 Codex</h3>
+        <div class="srow"><code style="max-width:none">C:\\Users\\chenqi\\.codex</code>
+          <span class="pill ok" style="margin-left:auto">本机</span></div>
+      </div>
+      <div class="sec"><h3>让正在做的任务显示到看板</h3>
+        <div class="srow" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div class="label" style="font-size:11px">1 复制同步指令 · 2 回到 Codex 当前对话粘贴 · 3 回来确认任务出现</div>
+          <div style="display:flex;gap:8px"><button class="btn">复制同步指令</button><button class="btn pri">刷新状态</button></div>
+        </div>
+      </div>
+      <div class="warnbox">断开只移除仍属于本工具的条目，保留全部任务数据。</div>
+    </div>
+    <div class="foot"><span>不会覆盖陌生配置</span><span class="r"><button class="btn dan">断开…</button><button>关闭</button></span></div>
+  </div>`;
+}
+
+function notificationsScreen() {
+  const n = FB.notifications, now = FB.now();
+  return `<div class="win utility">
+    ${bar('通知', '独立窗口 · 置顶', '')}
+    <div class="ubody">
+      <div class="note">外部渠道独立开关；桌面浮窗不受影响。</div>
+      <div class="sec"><h3>渠道 <span>${Object.values(opts.ch).filter(Boolean).length} 个已启用</span></h3>
+        ${n.channels.map(c => {
+          const on = c.id === 'feishu' ? opts.ch.feishu : opts.ch[c.id] !== false && true;
+          const state = c.id === 'wechat' ? '已绑定 · 已启用' : c.id === 'wecom' ? '已配置 · 不代表测试通过' : '未配置';
+          return `<div class="ch"><div class="nm">${c.name}<small>${c.configured ? state : '未配置'}</small></div>
+            <span class="pill ${c.configured ? 'ok' : 'off'}">${c.configured ? '已配置' : '未配置'}</span>
+            <div class="sw ${on ? 'on' : ''}" data-ch="${c.id}"></div></div>`;
+        }).join('')}
+        <p class="hint">微信需扫码绑定收件人；企微与飞书使用机器人 webhook。保存配置不代表平台验证通过，请单独发送测试。</p>
+      </div>
+      <div class="sec"><h3>订阅事件</h3>
+        ${[['blocker_opened','卡点出现','需要你介入时通知'],['task_completed','任务完成','任务结束时通知'],['blocker_resolved','卡点解除','问题解决后同步状态']].map(e =>
+          `<div class="srow"><div class="label">${e[1]}<small>${e[2]}</small></div>
+           <div class="sw ${opts.sub[e[0]] ? 'on' : ''}" data-sub="${e[0]}"></div></div>`).join('')}
+      </div>
+      <div class="sec"><h3>发送记录</h3>
+        <table class="recs"><thead><tr><th>时间</th><th>渠道</th><th>事件</th><th>状态</th></tr></thead>
+        <tbody>${n.records.map(r => `<tr>
+          <td class="t">${K.ago(now - r.atAgo, now)}</td>
+          <td>${r.channel === 'wechat' ? '微信' : r.channel === 'wecom' ? '企微' : '飞书'}</td>
+          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${K.esc(r.title)}</td>
+          <td class="s"><span class="pill ${r.status === 'sent' ? 'ok' : r.status === 'failed' ? 'bad' : 'off'}">${r.status === 'sent' ? '平台已受理' : r.status === 'failed' ? '投递失败' : '未投递'}</span></td>
+        </tr>`).join('')}</tbody></table></div>
+    </div>
+    <div class="foot"><span>平台受理不代表对方已读</span><span class="r"><button>关闭</button></span></div>
+  </div>`;
+}
+
+function updatesScreen() {
+  return `<div class="win utility">
+    ${bar('更新', '独立窗口', '')}
+    <div class="ubody">
+      <div class="sec"><h3>版本 <span>0.14.1 → 0.15.0</span></h3>
+        <div class="srow"><div class="label">发现可用更新<small>下载完成后仍需确认安装，不会自动重启</small></div>
+          <button class="btn pri">下载更新</button></div>
+        <p class="hint">更新只重启看板，不结束 Codex，也不影响正在进行的任务。</p>
+      </div>
+      <div class="sec"><h3>偏好</h3>
+        <div class="srow"><div class="label">自动检查更新</div><div class="sw on"></div></div>
+        <div class="srow"><div class="label">自动下载<small>自动下载不会自动安装</small></div><div class="sw on"></div></div>
+        <p class="hint">上次检查 ${K.fmtDateTime(FB.now() - 1800)}</p>
+      </div>
+      <div class="note">清单已用 Ed25519 签名；可在发布页核对 SHA256。</div>
+    </div>
+    <div class="foot"><span></span><span class="r"><button class="btn">发布页面 ↗</button><button>关闭</button></span></div>
+  </div>`;
+}
+
+function repairScreen() {
+  return `<div class="win utility">
+    ${bar('修复', '独立窗口', '')}
+    <div class="ubody">
+      <div class="note">任务记录无法正常显示时，可尝试安全修复并重启看板。原始记录会保留，进行中的会话不会被强行结束。</div>
+      <div class="sec"><h3>状态</h3>
+        <div class="srow"><div class="label">可尝试恢复任务记录<small>尚未开始。修复会先暂停写入，用一致性快照重建，再重启看板验证。</small></div></div>
+        <div class="srow"><div class="label" style="font-family:var(--mono);font-size:9.5px;color:var(--dim)">记录路径</div>
+          <code>C:\\Users\\chenqi\\AppData\\Local\\CodexFloatboard\\data</code></div>
+      </div>
+      <div class="warnbox">部分历史记录可能无法找回。请勿删除原始记录目录。</div>
+      <div style="display:flex;gap:8px"><button class="btn pri">修复并重启</button><button class="btn">取消</button></div>
+    </div>
+    <div class="foot"><span>不会强行结束 Codex</span><span class="r"><button>关闭</button></span></div>
+  </div>`;
+}
+
+function render() {
+  const map = {
+    main: () => mainScreen(false), narrow: () => mainScreen(true), dock: dockScreen,
+    completed: completedScreen, settings: settingsScreen, integration: integrationScreen,
+    notifications: notificationsScreen, updates: updatesScreen, repair: repairScreen,
+  };
+  document.getElementById('stage').innerHTML = (map[S.screen] || map.main)();
+  document.getElementById('dock').innerHTML = SCREENS.map(([k, l]) =>
+    k === '|' ? '<span class="sep"></span>' : `<button class="${S.screen === k ? 'on' : ''}" data-screen="${k}">${l}</button>`).join('');
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-screen]');
+  if (b) { S.screen = b.dataset.screen; render(); return; }
+  const f = e.target.closest('[data-focus]');
+  if (f) { S.focus = f.dataset.focus; if (S.screen !== 'main' && S.screen !== 'narrow') S.screen = 'main'; render(); return; }
+  const sw = e.target.closest('[data-toggle]');
+  if (sw) { stat[sw.dataset.toggle] = !stat[sw.dataset.toggle]; sw.classList.toggle('on'); return; }
+  const ch = e.target.closest('[data-ch]');
+  if (ch) { opts.ch[ch.dataset.ch] = !opts.ch[ch.dataset.ch]; render(); return; }
+  const sb = e.target.closest('[data-sub]');
+  if (sb) { opts.sub[sb.dataset.sub] = !opts.sub[sb.dataset.sub]; sb.classList.toggle('on'); }
+});
+
+render();
+setInterval(() => { if (S.screen === 'main' || S.screen === 'narrow') render(); }, 1000);
+</script>
+</body>
+</html>
