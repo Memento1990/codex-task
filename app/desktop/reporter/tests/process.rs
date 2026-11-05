@@ -26,15 +26,16 @@ fn worker_singleton_restart_and_backlog(){
     assert_eq!(store::read_json(&temp.0.join("health.json")).unwrap()["implementation"],"rust");drop(third);
 }
 #[test]
-fn collector_cooperative_upgrade_preserves_queue_and_completion_episodes(){
+fn collector_ready_or_cooperative_upgrade_preserves_queue_and_completion_episodes(){
     let temp=Temp::new();
     let legacy=std::env::var_os("FLOATBOARD_TEST_LEGACY_REPORTER");
     let mut old=if let Some(exe)=legacy.as_ref(){Worker(Command::new(exe).arg("--worker").arg("--data-dir").arg(&temp.0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap())}else{worker(&temp.0)};
-    wait(||temp.0.join("health.json").exists());
-    if legacy.is_none(){let mut h=store::read_json(&temp.0.join("health.json")).unwrap();h["version"]=json!("0.9.0");store::atomic_json(&temp.0.join("health.json"),&h).unwrap();}
+    wait(||store::read_json(&temp.0.join("health.json")).is_ok_and(|h|h["status"]=="ok"));
     // Legacy launchers ignore the new upgrade lock; compete throughout handoff.
-    let racers=legacy.map(|exe|{let root=temp.0.clone();std::thread::spawn(move||{for _ in 0..20{let status=Command::new(&exe).arg("--worker").arg("--data-dir").arg(&root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();assert!(status.success());}})});
-    runtime::spawn_worker(&temp.0).unwrap();wait(||old.0.try_wait().unwrap().is_some());assert!(old.0.wait().unwrap().success());
+    let racers=legacy.as_ref().map(|exe|{let exe=exe.clone();let root=temp.0.clone();std::thread::spawn(move||{for _ in 0..20{let status=Command::new(&exe).arg("--worker").arg("--data-dir").arg(&root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();assert!(status.success());}})});
+    runtime::spawn_worker(&temp.0).unwrap();
+    if legacy.is_some(){wait(||old.0.try_wait().unwrap().is_some());assert!(old.0.wait().unwrap().success());}
+    else{assert!(old.0.try_wait().unwrap().is_none(),"a current healthy collector must be reused");}
     if let Some(racers)=racers{racers.join().unwrap();}
     for (revision,status) in [(0,"completed"),(1,"running")] {
         store::enqueue(&temp.0,json!({"kind":"progress","session_id":"upgrade","host_id":"fixture","report":{"revision":revision,"title":format!("task-{revision}"),"status":status,"plan":[{"id":"s","title":"step","status":if status=="completed"{"completed"}else{"inProgress"}}],"evidence":["fixture proof"],"blockers":[]}})).unwrap();

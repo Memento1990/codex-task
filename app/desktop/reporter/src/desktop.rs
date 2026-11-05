@@ -2,7 +2,7 @@ use std::{collections::HashMap,path::{Path,PathBuf}};
 use serde_json::{json,Value};
 use crate::{Result,now,store::{Store,read_json,atomic_json},integration};
 
-pub fn defaults()->Value{json!({"auto_start":false,"show_taskbar":false,"theme":"dark","notifications":true,"notification_seconds":3,"dock_hover_summary":true,"dock_summary_mode":"hover","startup_command":""})}
+pub fn defaults()->Value{json!({"auto_start":false,"show_taskbar":false,"theme":"dark","appearance_revision":2,"notifications":true,"notification_seconds":3,"dock_hover_summary":true,"dock_summary_mode":"hover","startup_command":""})}
 pub fn validate_options(value:&Value)->Result<Value>{
     if !value.is_object(){return Err("设置格式无效".into());}let mut out=defaults();for key in ["auto_start","show_taskbar","theme","notifications","notification_seconds","dock_hover_summary","dock_summary_mode"]{if let Some(value)=value.get(key){out[key]=value.clone();}}
     if ["auto_start","show_taskbar","notifications","dock_hover_summary"].iter().any(|k|!out[k].is_boolean()){return Err("开关设置无效".into());}
@@ -12,7 +12,7 @@ pub fn validate_options(value:&Value)->Result<Value>{
     if ![Some("light"),Some("dark")].contains(&out["theme"].as_str()){return Err("主题设置无效".into());}
     if !out["notification_seconds"].as_u64().is_some_and(|n|(1..=60).contains(&n)){return Err("通知停留时间须为 1–60 秒".into());}Ok(out)
 }
-pub fn load_options(root:&Path)->Value{read_json(&root.join("preferences.json")).ok().and_then(|raw|validate_options(&raw).ok().map(|mut valid|{valid["startup_command"]=raw.get("startup_command").cloned().unwrap_or(json!(""));valid})).unwrap_or_else(defaults)}
+pub fn load_options(root:&Path)->Value{read_json(&root.join("preferences.json")).ok().and_then(|raw|validate_options(&raw).ok().map(|mut valid|{if raw["appearance_revision"]!=2{valid["theme"]=json!("dark");}valid["startup_command"]=raw.get("startup_command").cloned().unwrap_or(json!(""));valid})).unwrap_or_else(defaults)}
 pub fn merge_options(previous:&Value,patch:&Value)->Result<Value>{
     if !patch.is_object(){return Err("设置格式无效".into());}
     let mut merged=previous.clone();
@@ -38,10 +38,23 @@ mod tests {
     impl TempRoot{fn new()->Self{let path=std::env::temp_dir().join(format!("floatboard-options-{}",uuid::Uuid::new_v4().simple()));std::fs::create_dir_all(&path).unwrap();Self(path)}}
     impl Drop for TempRoot{fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}}
     #[test]
+    fn prototype_theme_migrates_once_and_keeps_explicit_later_choice(){
+        let temp=TempRoot::new();let gui=temp.0.join("CodexFloatboard.exe");
+        atomic_json(&temp.0.join("preferences.json"),&json!({"theme":"light","notifications":false,"notification_seconds":45})).unwrap();
+        let legacy=std::fs::read(temp.0.join("preferences.json")).unwrap();
+        assert_eq!(load_options(&temp.0)["theme"],"dark");
+        assert_eq!(std::fs::read(temp.0.join("preferences.json")).unwrap(),legacy,"reading preferences never mutates the saved file");
+        let saved=save_options_with_startup(&temp.0,&gui,&json!({"theme":"light"}),true,|_,_,_|panic!("must not write startup")).unwrap();
+        assert_eq!(saved["appearance_revision"],2);
+        assert_eq!(load_options(&temp.0)["theme"],"light");
+        assert_eq!(load_options(&temp.0)["notification_seconds"],45);
+        assert_eq!(load_options(&temp.0)["notifications"],false);
+    }
+    #[test]
     fn preference_patches_merge_latest_values_and_preserve_saved_light_theme(){
         let temp=TempRoot::new();let gui=temp.0.join("CodexFloatboard.exe");
         assert_eq!(load_options(&temp.0)["theme"],"dark");
-        atomic_json(&temp.0.join("preferences.json"),&json!({"theme":"light","notifications":false,"notification_seconds":60,"dock_summary_mode":"always"})).unwrap();
+        atomic_json(&temp.0.join("preferences.json"),&json!({"theme":"light","appearance_revision":2,"notifications":false,"notification_seconds":60,"dock_summary_mode":"always"})).unwrap();
         let mut engine=Engine::new(temp.0.clone(),gui);
         let saved=engine.call("preferences",json!({"show_taskbar":true})).unwrap();
         assert_eq!(saved["theme"],"light");assert_eq!(saved["notifications"],false);assert_eq!(saved["notification_seconds"],60);assert_eq!(saved["dock_summary_mode"],"always");
@@ -232,14 +245,19 @@ impl Engine{
             // Storage failure is not collector failure, nor an empty task list.
             // Keep connection diagnostics available even when SQLite cannot read.
             let loaded=(||{if self.store.is_none(){self.store=Some(Store::open(&self.root,true)?);}self.store.as_mut().unwrap().tasks()})();
-            let (tasks,storage)=match loaded{Ok(tasks)=>(tasks,json!({"status":"ok","message":""})),Err(_)=>{self.store=None;(Vec::new(),json!({"status":"error","message":"任务数据库读取失败，数据不等于已清空。请保留数据库及 WAL 文件，勿删除、重建或反复重新连接；先备份并检查数据完整性。"}))}};
+            let (tasks,storage)=match loaded{Ok(tasks)=>(tasks,json!({"status":"ok","message":""})),Err(error)=>{
+                self.store=None;let diagnostic=crate::storage_error::diagnostic(&error);
+                let _=crate::store::atomic_json(&crate::bridge::control_root(&self.root).join("runtime/storage-last-error.json"),&json!({"at":now(),"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"diagnostic":diagnostic}));
+                let message=if diagnostic["stage"].as_str().is_some_and(|stage|["file_identity.split","file_identity.replaced","file_identity.path"].contains(&stage)){"数据文件身份冲突，请先保存工作并正常重启 Windows，再打开看板重试。请保留数据库及 WAL 文件，勿删除、重建或反复重新连接。"}else{"任务数据库读取失败，数据不等于已清空。请保留数据库及 WAL 文件，勿删除、重建或反复重新连接；先备份并检查数据完整性。"};
+                (Vec::new(),json!({"status":"error","message":message,"diagnostic":diagnostic}))}};
             if params["notify"]!=false {self.start_notifications();}
             let notices=if params["notify"]!=false && storage["status"]=="ok"{self.notices.update(&tasks)}else{Vec::new()};let options=load_options(&self.root);
             let heartbeat=read_json(&self.root.join("health.json")).ok();
             let age=heartbeat.as_ref().and_then(|v|v["at"].as_f64()).map(|at|now()-at);
             let healthy=heartbeat.as_ref().is_some_and(|v|v["status"]=="ok") && age.is_some_and(|age|(0.0..5.).contains(&age));
             let reason=if heartbeat.is_none(){"missing"}else if age.is_none_or(|age|age<0.){"clock_or_invalid"}else if age.is_some_and(|age|age>=5.){"stale"}else if heartbeat.as_ref().is_some_and(|v|v["status"]!="ok"){"storage_error"}else{"ok"};
-            let collector=json!({"status":reason,"heartbeat_age":age,"pid":heartbeat.as_ref().map(|v|v["pid"].clone()),"version":heartbeat.as_ref().map(|v|v["version"].clone()),"start_error":self.collector_start_error,"data_root":self.root,"guidance":if healthy{"采集心跳正常；不代表任务库一定可读。"}else{"先查看数据目录与数据库读取状态；不要删除库或反复重连。旧采集器交接失败不会停止 Codex，请保留现场后检查。"}});
+            let needs_restart=storage["diagnostic"]["stage"].as_str().is_some_and(|s|s.starts_with("file_identity."))||self.collector_start_error.as_ref().is_some_and(|error|error.contains("stage=worker.legacy_protocol")||error.contains("stage=file_identity."));
+            let collector=json!({"status":reason,"heartbeat_age":age,"pid":heartbeat.as_ref().map(|v|v["pid"].clone()),"version":heartbeat.as_ref().map(|v|v["version"].clone()),"diagnostic":heartbeat.as_ref().map(|v|v["diagnostic"].clone()),"start_error":self.collector_start_error,"data_root":self.root,"guidance":if needs_restart{"请先保存工作并正常重启 Windows，再打开看板重试。请保留数据库及 WAL 文件，勿删除、重建或反复重新连接。"}else if healthy{"采集心跳正常；不代表任务库一定可读。"}else{"先查看数据目录与数据库读取状态；不要删除库或反复重连。旧采集器交接失败不会停止 Codex，请保留现场后检查。"}});
             if self.connection.is_none()||now()-self.checked_at>3.{let mut connection=crate::bridge::decorate_connection(&self.root,integration::connection_state(&self.root));connection["codex_home"]=json!(integration::codex_home());connection["isolated"]=json!(std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1"));connection["codex_mode"]=json!(std::env::var("FLOATBOARD_CODEX_MODE").unwrap_or_else(|_|"isolated".into()));if !healthy && connection["state"]=="sync_verified"{connection["state"]=json!("error");connection["diagnostics"]=json!(["同步曾验证，但当前采集器离线；请检查数据目录权限，稍后再检查连接。"]);}self.connection=Some(connection);self.checked_at=now();}
             Ok(json!({"tasks":tasks,"notices":if options["notifications"]==true{notices}else{Vec::new()},"options":options,"healthy":healthy,"collector":collector,"storage":storage,"connection":self.connection,"data_location":self.data_location(),"restart_required":self.restart_required,"now":now()}))
         },

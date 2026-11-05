@@ -1,0 +1,14 @@
+[
+  {
+    "file": "designs\\redesign-v2\\reference-a-3d2b660\\a-inspection-matrix.html",
+    "sha256": "702d4afc8153d7f123cf957b74cda8db4a12190f6d03ce37d51b4e4613ae7ed8"
+  },
+  {
+    "file": "designs\\redesign-v2\\reference-a-3d2b660\\shared\\data.js",
+    "sha256": "50476bef255f2bb19e9029244b0d09666d69828d75be43726251e05d9d636eb6"
+  },
+  {
+    "file": "designs\\redesign-v2\\reference-a-3d2b660\\shared\\kit.js",
+    "sha256": "2a9e18704baef7e2ef67d4cb818585b28277f83e59f36dcce2d68a427dd803ea"
+  }
+]

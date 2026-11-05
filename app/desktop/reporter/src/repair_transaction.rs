@@ -13,15 +13,16 @@ fn bounded(path:&Path)->Result<Value>{migration::check_path(path)?;let m=fs::met
 fn save(root:&Path,j:&Value)->Result<()>{let id=j["id"].as_str().filter(|id|valid(id)).ok_or("修复事务标识无效")?;let p=base(root)?.join(id);migration::check_path(&p)?;fs::create_dir_all(&p).map_err(|_|"修复状态目录不可写")?;atomic_json(&p.join("journal.json"),j)?;atomic_json(&base(root)?.join("latest.json"),&json!({"version":1,"id":id}))}
 fn target(j:&Value)->Result<PathBuf>{Ok(PathBuf::from(j["destination"].as_str().ok_or("修复目标缺失")?))}
 fn load(root:&Path,id:&str)->Result<Value>{if !valid(id){return Err("修复事务标识无效".into());}let j=bounded(&base(root)?.join(id).join("journal.json"))?;let expected=root.parent().ok_or("修复目录无效")?.join(format!("data-repaired-{id}"));if j["version"]!=1||j["id"]!=id||j["source"]!=json!(root)||j["destination"]!=json!(expected){return Err("修复事务归属不匹配".into());}migration::check_path(&expected)?;Ok(j)}
-fn seal(root:&Path)->Result<()>{let s=Store::open(root,false)?;s.db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;").map_err(|_|"恢复副本仍被占用，未切换数据")?;Ok(())}
+fn seal(root:&Path)->Result<()>{let db=rusqlite::Connection::open_with_flags(root.join("events.sqlite3"),rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(|_|"恢复副本不可读")?;let busy:i64=db.query_row("PRAGMA wal_checkpoint(TRUNCATE)",[],|r|r.get(0)).map_err(|_|"恢复副本仍被占用，未切换数据")?;if busy!=0{return Err("恢复副本仍被占用，未切换数据".into());}let mode:String=db.query_row("PRAGMA journal_mode=DELETE",[],|r|r.get(0)).map_err(|_|"恢复副本封存失败")?;if !mode.eq_ignore_ascii_case("delete"){return Err("恢复副本封存失败".into());}Ok(())}
 fn verify(root:&Path)->Result<usize>{let mut s=Store::open(root,true)?;let check:String=s.db.query_row("PRAGMA integrity_check",[],|r|r.get(0)).map_err(|_|"恢复数据库检查失败")?;if check!="ok"{return Err("恢复数据库完整性未通过".into());}let n=s.tasks()?.len();if n==0{return Err("没有可恢复任务，不会启用空数据库".into());}Ok(n)}
 /// Stages a replacement, never changes the active root.
-pub fn prepare(root:&Path)->Result<Value>{let root=source(root)?;if migration::resolve_root(&root)?!=root{return Err("数据目录已经切换，请重启看板".into());}let _lock=ProcessLock::acquire(&base(&root)?.join("repair.lock"))?;let _migration=ProcessLock::acquire(&root.join(migration::LOCK))?;
+pub fn prepare(root:&Path)->Result<Value>{let root=source(root)?;if migration::resolve_root(&root)?!=root{return Err("数据目录已经切换，请重启看板".into());}crate::file_identity::ensure_no_split(&root)?;let _lock=ProcessLock::acquire(&base(&root)?.join("repair.lock"))?;let _migration=ProcessLock::acquire(&root.join(migration::LOCK))?;
  let report=crate::database_repair::call(&root,"recover_copy",&json!({"confirmed":true}))?;
- if report["status"]!="partial_recovery"||report["source_unchanged_during_copy"]!=true||report["recovery"]["destination_integrity_ok"]!=true||report["recovery"]["recovered_tasks"].as_u64().unwrap_or(0)==0{return Err("未找到通过验证的可恢复任务；原数据保持不变".into());}
- let recovery_id=report["recovery_id"].as_str().filter(|id|valid(id)).ok_or("恢复副本标识无效")?;let recovered=root.parent().unwrap().join("control/database-recovery").join(recovery_id).join("recovered-data");let count=verify(&recovered)?;seal(&recovered)?;if report["recovery"]["recovered_tasks"].as_u64()!=Some(count as u64){return Err("恢复任务数量不一致".into());}
+ if report["status"]=="partial_recovery"{return Err(format!("仅能部分抢救 {} 个任务，事件历史与耗时无法恢复；未启用部分副本，原数据和日志已保留。",report["recovery"]["recovered_tasks"].as_u64().unwrap_or(0)));}
+ if report["status"]!="full_recovery"||report["source_unchanged_during_copy"]!=true||report["recovery"]["destination_integrity_ok"]!=true||report["recovery"]["recovered_tasks"].as_u64().unwrap_or(0)==0{return Err("未找到通过完整验证的可恢复任务；原数据保持不变".into());}
+ let recovery_id=report["recovery_id"].as_str().filter(|id|valid(id)).ok_or("恢复副本标识无效")?;let recovered=root.parent().unwrap().join("control/database-recovery").join(recovery_id).join("complete-data");let count=verify(&recovered)?;seal(&recovered)?;if report["recovery"]["recovered_tasks"].as_u64()!=Some(count as u64){return Err("恢复任务数量不一致".into());}
  let id=uuid::Uuid::new_v4().to_string();let dest=root.parent().unwrap().join(format!("data-repaired-{id}"));migration::check_path(&dest)?;fs::create_dir(&dest).map_err(|_|"恢复目录创建失败")?;let hash=digest(&recovered.join("events.sqlite3"),MAX_FILE)?;fs::copy(recovered.join("events.sqlite3"),dest.join("events.sqlite3")).map_err(|_|"恢复数据库复制失败")?;if digest(&dest.join("events.sqlite3"),MAX_FILE)?!=hash||verify(&dest)?!=count{return Err("恢复目标验证失败".into());}seal(&dest)?;let hash=digest(&dest.join("events.sqlite3"),MAX_FILE)?;
- let j=json!({"version":1,"id":id,"source":root,"destination":dest,"phase":"prepared","created_at":crate::now(),"recovered_tasks":count,"recovered_task_rows":report["recovery"]["recovered_task_rows"],"database_sha256":hash,"source_files":report["source_files"],"recovery_id":recovery_id,"partial":true,"history_recovered":false,"timing_recovered":false,"baseline_reset":true,"original_preserved":true});save(&root,&j)?;Ok(j)}
+ let j=json!({"version":1,"id":id,"source":root,"destination":dest,"phase":"prepared","created_at":crate::now(),"recovered_tasks":count,"recovered_task_rows":report["recovery"]["recovered_task_rows"],"database_sha256":hash,"source_files":report["source_files"],"recovery_id":recovery_id,"recovery_mode":"full","partial":false,"history_recovered":true,"timing_recovered":true,"notification_baseline_reset":true,"original_preserved":true});save(&root,&j)?;Ok(j)}
 /// A committed redirect is never rolled back: its target may contain new events.
 pub fn status(root:&Path)->Result<Value>{let root=source(root)?;let p=base(&root)?.join("latest.json");if !p.exists(){return Ok(json!({"phase":"not_started"}));}let latest=bounded(&p)?;let mut j=load(&root,latest["id"].as_str().ok_or("修复状态标识无效")?)?;let current=migration::resolve_root(&root)?;if current==target(&j)?{j["phase"]=json!("committed");}else if current!=root{return Err("目录已由其他事务切换".into());}Ok(j)}
 // Deny concurrent write/delete handles without opening the source with SQLite.
@@ -51,17 +52,19 @@ fn origins(root:&Path)->Result<Vec<PathBuf>>{let p=root.join("migration-origins.
 pub fn apply(root:&Path,id:&str)->Result<Value>{let root=source(root)?;let _transaction=ProcessLock::acquire(&base(&root)?.join("repair.lock"))?;let mut j=load(&root,id)?;let dest=target(&j)?;
  if migration::resolve_root(&root)?==dest{j["phase"]=json!("committed");return Ok(j);}
  if migration::resolve_root(&root)?!=root||j["phase"]!="prepared"{return Err("修复事务已变化，未切换数据".into());}
+ if j["recovery_mode"]!="full"||j["partial"]!=false{return Err("旧准备仅包含部分抢救，事件历史与耗时未保留；请重新准备完整恢复，未切换数据".into());}
+ crate::file_identity::ensure_no_split(&root)?;
  let _notifications=ProcessLock::acquire(&root.join("notification-activity.lock")).map_err(|_|"通知正在处理，请稍后修复")?;let _integration=ProcessLock::acquire(&root.join("integration.lock"))?;
  crate::runtime::with_repair_pause(&root,|pause|{
   pause.verify()?;let _source_guards=source_guards(&root)?;let _destination=ProcessLock::acquire(&dest.join("collector.lock"))?;let _target_migration=ProcessLock::acquire(&dest.join(migration::LOCK))?;
   if j["database_sha256"].as_str()!=Some(digest(&dest.join("events.sqlite3"),MAX_FILE)?.as_str())||verify(&dest)? as u64!=j["recovered_tasks"].as_u64().ok_or("恢复任务数量缺失")?{return Err("恢复目标已变化，未切换数据".into());}
   // GUI/collector shutdown can legitimately checkpoint WAL and remove SHM.
-  // Re-salvage under the proven pause rather than accepting stale snapshots or
+  // Re-copy in full under the proven pause rather than accepting stale snapshots or
   // rejecting every harmless checkpoint after preparation.
   let fresh=crate::database_repair::call(&root,"recover_copy",&json!({"confirmed":true}))?;
-  if fresh["status"]!="partial_recovery"||fresh["source_unchanged_during_copy"]!=true||fresh["recovery"]["destination_integrity_ok"]!=true||fresh["recovery"]["recovered_tasks"].as_u64().unwrap_or(0)==0{return Err("暂停后的恢复副本未通过验证，未切换数据".into());}
+  if fresh["status"]!="full_recovery"||fresh["source_unchanged_during_copy"]!=true||fresh["recovery"]["destination_integrity_ok"]!=true||fresh["recovery"]["recovered_tasks"].as_u64().unwrap_or(0)==0{return Err("暂停后的完整恢复副本未通过验证；不会降级为丢失历史与耗时的部分抢救，未切换数据".into());}
   let rid=fresh["recovery_id"].as_str().filter(|id|valid(id)).ok_or("恢复标识无效")?;
-  let recovered=root.parent().unwrap().join("control/database-recovery").join(rid).join("recovered-data");let count=verify(&recovered)?;seal(&recovered)?;
+  let recovered=root.parent().unwrap().join("control/database-recovery").join(rid).join("complete-data");let count=verify(&recovered)?;seal(&recovered)?;
   if count as u64!=fresh["recovery"]["recovered_tasks"].as_u64().ok_or("恢复数量缺失")?{return Err("恢复数量不一致".into());}
   for name in ["events.sqlite3-wal","events.sqlite3-shm"]{if dest.join(name).exists(){return Err("恢复目标出现活动日志，未切换数据".into());}}
   let bytes=fs::read(recovered.join("events.sqlite3")).map_err(|_|"恢复副本不可读")?;if bytes.len() as u64>MAX_FILE{return Err("恢复副本过大".into());}
@@ -91,5 +94,15 @@ mod tests {
   let writer=fs::OpenOptions::new().write(true).open(&path).unwrap();assert!(source_guards(&root).is_err());drop(writer);
   let guards=source_guards(&root).unwrap();assert!(fs::OpenOptions::new().write(true).open(&path).is_err());assert!(fs::remove_file(&path).is_err());drop(guards);
   assert_eq!(fs::read(&path).unwrap(),b"fixture");fs::remove_dir_all(&root).unwrap();
+ }
+ #[test]
+ fn detached_main_writer_with_current_wal_cannot_be_mistaken_for_no_writer(){
+  let root=std::env::temp_dir().join(format!("floatboard-repair-split-guard-{}",uuid::Uuid::new_v4()));fs::create_dir(&root).unwrap();
+  let main=root.join("events.sqlite3");let wal=root.join("events.sqlite3-wal");fs::write(&main,b"old fixture").unwrap();fs::write(&wal,b"shared wal fixture").unwrap();
+  let old_main=fs::OpenOptions::new().write(true).open(&main).unwrap();let old_wal=fs::OpenOptions::new().write(true).open(&wal).unwrap();
+  fs::rename(&main,root.join("detached-main.sqlite3")).unwrap();fs::write(&main,b"new fixture").unwrap();
+  // A new path-level collector lock is not evidence that this writer vanished.
+  let _new_lock=ProcessLock::acquire(&root.join("collector.lock")).unwrap();assert!(source_guards(&root).is_err());assert_eq!(fs::read(&main).unwrap(),b"new fixture");
+  drop(old_main);drop(old_wal);drop(_new_lock);fs::remove_dir_all(root).unwrap();
  }
 }

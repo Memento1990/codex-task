@@ -24,7 +24,7 @@ export function recordedDate(at: number | null | undefined): string {
 
 export function modalFocus(node: HTMLElement) {
   const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  const focusable = () => [...node.querySelectorAll<HTMLElement>('button:not(:disabled),input,select,textarea,a[href],[tabindex="0"]')].filter(el => el.getClientRects().length);
+  const focusable = () => [...node.querySelectorAll<HTMLElement>('button,input,select,textarea,a[href],[tabindex="0"]')].filter(el => !el.matches(':disabled') && !el.closest('[inert]') && el.getClientRects().length);
   queueMicrotask(() => (node.querySelector<HTMLElement>('[data-initial-focus]') || focusable()[0] || node).focus());
   const trap = (event: KeyboardEvent) => {
     if (event.key !== 'Tab') return;

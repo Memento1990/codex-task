@@ -140,7 +140,7 @@ pub fn migrate(root: &Path, destination: &Path) -> Result<PathBuf> {
     // collector identity continuously across commit and destination activation.
     // A stale STOP is ours to replace because migration.lock is held.
     let _=fs::remove_file(root.join(STOP));
-    runtime::spawn_worker(&root)?;
+    runtime::spawn_worker_for_pause(&root)?;
     let nonce=uuid::Uuid::new_v4().to_string();
     let stop=root.join(STOP); atomic_json(&stop,&json!({"version":1,"nonce":nonce,"at":crate::now()}))?;
     let _stop=StopGuard(stop);

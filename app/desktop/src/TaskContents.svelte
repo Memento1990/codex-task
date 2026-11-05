@@ -43,10 +43,12 @@
       {#each task.evidence as evidence}
         <div class="mx-evidence-row">
           <span class="mx-proof-icon" aria-hidden="true">◇</span>
-          <span class="mx-proof-label" title={evidence.reference}>{evidence.label}</span>
-          <span class="mx-proof-time" title={`首次记录：${recordedDate(evidence.at)}`}>{firstRecorded(evidence.at, now)}</span>
-          {#if safeReference(evidence.reference)}<button class="mx-text-button" onclick={() => onOpenEvidence(evidence.reference)}>打开</button>{:else}<span class="mx-proof-time" title="引用为空或格式不受支持，可复制检查">无效引用</span>{/if}
-          <button class="mx-copy-proof mx-text-button" title="复制证据引用" onclick={() => onCopy(evidence.reference)}>复制</button>
+          <div class="mx-proof-body"><div class="mx-proof-label" title={evidence.reference}>{evidence.label}</div>
+            <div class="mx-proof-meta"><span class="mx-proof-time" title={`首次记录：${recordedDate(evidence.at)}`}>{firstRecorded(evidence.at, now)}</span><span class="mx-proof-actions">
+              {#if safeReference(evidence.reference)}<button class="mx-text-button" onclick={() => onOpenEvidence(evidence.reference)}>打开</button>{:else}<span class="mx-proof-time" title="引用为空或格式不受支持，可复制检查">无效引用</span>{/if}
+              <button class="mx-copy-proof mx-text-button" title="复制证据引用" onclick={() => onCopy(evidence.reference)}>复制</button>
+            </span></div>
+          </div>
         </div>
         {#if !columns}<p class="mx-reference">{evidence.reference || '未提供引用'}</p>{/if}
       {:else}<div class="mx-empty">暂无验收证据</div>{/each}

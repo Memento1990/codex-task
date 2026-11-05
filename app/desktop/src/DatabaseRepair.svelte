@@ -1,18 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { call, native } from './host';
+  import UtilityDialog from './UtilityDialog.svelte';
 
-  let {blocked=false,onbusychange=(_v:boolean)=>{}}:{blocked?:boolean;onbusychange?:(v:boolean)=>void}=$props();
+  let {blocked=false,dataDirectory='',onbusychange=(_v:boolean)=>{}}:{blocked?:boolean;dataDirectory?:string;onbusychange?:(v:boolean)=>void}=$props();
   type RepairStatus='not_started'|'preparing'|'ready'|'blocked'|'failed'|'committed'|'awaiting_health'|'health_failed'|'completed';
-  type RepairSnapshot={status:RepairStatus;recovered_tasks?:number;message?:string;details?:unknown};
+  type RepairSnapshot={status:RepairStatus;source?:string;recovered_tasks?:number;recovery_mode?:'full'|'partial';history_recovered?:boolean;timing_recovered?:boolean;message?:string;last_attempt?:{message?:string;reason?:string};details?:unknown};
   let snapshot=$state<RepairSnapshot|null>(null);
-  let pending=$state(false),loaded=$state(false),confirm=$state(false),error=$state('');
+  let pending=$state(false),loaded=$state(false),confirm=$state(false),error=$state(''),actionError=$state('');
   let revision=0,stopped=false;
   const activeStatuses:RepairStatus[]=['preparing','ready','committed','awaiting_health'];
   let active=$derived(snapshot!==null&&activeStatuses.includes(snapshot.status));
   let busy=$derived(pending||active);
   const labels:Record<RepairStatus,string>={
-    not_started:'可尝试恢复任务记录',
+    not_started:'可验证并完整恢复任务记录',
     preparing:'正在准备修复，请稍候…',
     ready:'准备已就绪，等待看板安全重启…',
     blocked:'暂时无法安全修复',
@@ -38,20 +39,17 @@
       error='暂时无法确认修复状态。原始记录仍保留，不会强行结束 Codex 或正在进行的会话。请稍后重新打开此页面。';
     }
   }
+  function reason(value:unknown){return (value instanceof Error?value.message:String(value)).replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,600);}
   async function repairRestart(){
     if(!confirm||busy||blocked||!native||!loaded||!known||error)return;
-    ++revision;pending=true;confirm=false;error='';
+    ++revision;pending=true;confirm=false;error='';actionError='';
     try{
       const next=await call<RepairSnapshot>('database_repair',{action:'repair_restart',confirmed:true});
       if(!stopped)snapshot=next;
-    }catch{
-      if(!stopped)error='未能安全完成修复。原始记录仍保留，不会强行结束 Codex 或正在进行的会话。请稍后重新打开此页面确认状态，不要删除原始记录。';
+    }catch(cause){
+      if(!stopped)actionError='本次修复未完成：'+reason(cause);
     }finally{if(!stopped)pending=false;}
   }
-  function escapeConfirmation(event:KeyboardEvent){
-    if(event.key==='Escape'&&confirm){event.preventDefault();event.stopPropagation();confirm=false;}
-  }
-  function focusConfirmation(node:HTMLDivElement){queueMicrotask(()=>node.querySelector<HTMLButtonElement>('button')?.focus());}
   onMount(()=>{
     let timer:ReturnType<typeof setTimeout>;
     async function loop(){await loadSnapshot();if(!stopped)timer=setTimeout(loop,1500);}
@@ -61,11 +59,13 @@
 </script>
 
 <section class="repair" aria-labelledby="repair-heading" aria-busy={busy}>
-  <strong id="repair-heading">任务记录</strong>
-  <div class="repair-status" role="status" aria-live="polite">
+  <p class="utility-note">任务记录无法正常显示时，可验证并恢复记录后安全重启看板。原始记录会保留，Codex 和正在进行的会话不会被强行结束。</p>
+  <section class="settings-section"><h3 id="repair-heading">修复状态</h3>
+  <div class="settings-row repair-status" role="status" aria-live="polite"><div class="row-label">
     <strong>{!native?'请从桌面程序打开此功能':!loaded?'正在读取修复状态…':known?labels[snapshot!.status]:'修复状态暂时无法确认'}</strong>
     {#if snapshot?.status==='completed'}
       <p>{recoveredCount!==null?`已恢复 ${recoveredCount} 个任务，重启后的检查已通过。`:'任务记录已恢复，重启后的检查已通过。'}</p>
+      {#if snapshot.recovery_mode==='full'}<p>事件、耗时和历史归档均已保留。</p>{:else}<p>{snapshot.message||'此前为部分恢复，历史记录与耗时可能不完整。'}</p>{/if}
     {:else if snapshot?.status==='committed'||snapshot?.status==='awaiting_health'}
       <p>{recoveredCount!==null?`${recoveredCount} 个任务等待验证，目前还不能确认修复成功。`:'任务记录正在等待验证，目前还不能确认修复成功。'}原始记录仍保留。</p>
     {:else if snapshot?.status==='health_failed'}
@@ -77,29 +77,30 @@
     {:else if loaded&&!known}
       <p>原始记录仍保留，不会强行结束正在进行的会话。请稍后重新打开此页面。</p>
     {/if}
-  </div>
-  {#if error}<p class="repair-warning" role="alert">{error}</p>{/if}
-  {#if blocked}<p class="repair-warning">请先完成当前设置、更新或数据迁移操作，再修复任务记录。原始记录仍保留，正在进行的会话不会被结束。</p>{/if}
+  </div></div>
+  <div class="settings-row"><span class="row-label">原始记录目录</span><code class="repair-directory" title={snapshot?.source||dataDirectory}>{snapshot?.source||dataDirectory||'目录暂不可用'}</code></div>
+  </section>
+  {#if error}<p class="utility-note warning" role="alert">{error}</p>{/if}
+  {#if actionError}<p class="utility-note warning" role="alert">{actionError}</p>{:else if snapshot?.last_attempt}<p class="utility-note warning" role="alert">{snapshot.last_attempt.message||snapshot.last_attempt.reason}</p>{/if}
+  {#if blocked}<p class="utility-note warning">请先完成当前设置、更新或数据迁移操作，再修复任务记录。原始记录仍保留，正在进行的会话不会被结束。</p>{/if}
+  <p class="utility-note warning">仅在完整验证通过后切换记录。部分抢救只保留副本并停止，不自动启用。请勿删除原始记录目录。</p>
+  <div class="buttons"><button type="button" class="primary" disabled={blocked||busy||!native||!loaded||!known||!!error} onclick={()=>confirm=true}>{busy?'正在修复…':'修复并重启'}</button></div>
   {#if confirm}
-    <div use:focusConfirmation class="confirmation" role="group" aria-label="修复并重启确认">
-      <strong>修复并重启看板？</strong>
-      <p>会保留原始记录，尽可能找回可读取的任务，并在准备就绪后自动重启看板。部分历史记录可能无法找回。不会强行结束 Codex 或正在进行的会话。</p>
+    <UtilityDialog title="修复并重启看板？" locked={busy||blocked} onClose={()=>confirm=false}>
+      <p>仅在完整验证通过后切换，保留事件、耗时和历史归档。如只能部分抢救，会保留副本并停止，不自动启用。准备就绪后看板会安全重启，不会强行结束 Codex 或正在进行的会话。</p>
       <div class="buttons">
-        <button type="button" onkeydown={escapeConfirmation} onclick={()=>confirm=false}>取消</button>
-        <button type="button" class="primary" disabled={blocked||busy||!known||!!error} onkeydown={escapeConfirmation} onclick={repairRestart}>确认修复并重启</button>
+        <button type="button" disabled={busy} onclick={()=>confirm=false}>取消</button>
+        <button type="button" class="primary" disabled={blocked||busy||!known||!!error} onclick={repairRestart}>确认修复并重启</button>
       </div>
-    </div>
-  {:else}
-    <div class="buttons"><button type="button" class="primary" disabled={blocked||busy||!native||!loaded||!known||!!error} onclick={()=>confirm=true}>{busy?'正在修复…':'修复并重启'}</button></div>
+    </UtilityDialog>
   {/if}
 </section>
 
 <style>
-  .repair{display:grid;gap:12px;font-size:11px;line-height:1.65}
-  .repair>strong{font-size:10px;font-weight:500;color:var(--muted);letter-spacing:.06em}
-  .repair p{margin:0;color:var(--muted);overflow-wrap:anywhere}
-  .repair-status{display:grid;gap:4px}
-  .buttons{display:flex;gap:8px;flex-wrap:wrap}
-  .confirmation{padding:12px;border:1px solid var(--stroke);background:var(--layer);border-radius:5px;display:grid;gap:8px}
-  .repair-warning{border-left:2px solid var(--stroke);padding-left:8px}
+  .repair{min-width:0;font-size:12px;line-height:1.65}
+  .repair p{overflow-wrap:anywhere}
+  .repair-status strong{display:block;font-size:13px;font-weight:500;color:var(--text)}
+  .repair-status p{margin:4px 0 0;color:var(--muted)}
+  .repair-directory{max-width:65%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font:11px var(--mx-mono)}
+  .buttons{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 </style>

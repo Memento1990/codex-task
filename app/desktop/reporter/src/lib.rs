@@ -1,6 +1,8 @@
 pub mod store;
 pub mod timing;
 pub mod runtime;
+pub mod file_identity;
+pub mod storage_error;
 pub mod ingest;
 pub mod integration;
 pub mod desktop;

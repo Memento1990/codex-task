@@ -31,12 +31,8 @@
       <div class="mx-legend">{#each segments.filter((segment, index) => index < 4 || segment.value) as segment (segment.key)}<span><i class={segment.key}></i>{segment.label}{segment.key === 'unknown' || segment.key === 'cancelled' ? ` ${segment.value}` : ''}</span>{/each}</div>
     </div>
   </div>
-  <div class="mx-searchbar">
-    <input aria-label="搜索任务、卡点、项目" placeholder="搜索任务、卡点、项目" bind:value={query}>
-    <select aria-label="任务状态" bind:value={filter}>{#each filters as [value, label]}<option {value}>{label}</option>{/each}</select>
-    <span class="mx-result-count">{visible.length} 项</span><button class="mx-command-button" title="搜索命令" aria-label="搜索命令" onclick={onCommand}>⌕</button>
-  </div>
-  <div class="mx-grid-heading" aria-hidden="true"><span>任务</span><span>进度</span><span>当前步骤</span><span>卡点</span><span>耗时</span></div>
+  {#if query}<div class="mx-search-scope"><span>搜索：{query}</span><span class="mx-result-count">{visible.length} 项</span><button aria-label="清除任务搜索" onclick={() => query = ''}>清除 ×</button></div>{/if}
+  <div class="mx-grid-heading"><span class="mx-task-heading"><span>任务</span><select aria-label="任务状态" bind:value={filter}>{#each filters as [value, label]}<option {value}>{label}</option>{/each}</select></span><span>进度</span><span>当前步骤</span><span>卡点</span><span>耗时</span></div>
   <div class="mx-rows" data-testid="matrix-rows">
     {#each visible as task (task.id)}
       {@const tone = summaryTone(task)}{@const blockers = openBlockers(task)}{@const progress = task.plan.length ? done(task) / task.plan.length : 0}
@@ -46,7 +42,7 @@
         <span class="mx-progress-cell"><span class="mx-progress"><i class={tone} style:width={`${progress * 100}%`}></i></span><span class="mx-progress-numbers"><span>{task.plan.length ? `${done(task)}/${task.plan.length}` : '暂无步骤'}</span><span>{task.plan.length ? `${Math.round(progress * 100)}%` : '—'}</span></span></span>
         <span class="mx-current-step"><span>{task.current_step || (task.status === 'completed' ? '—' : '等待下一步进展')}</span><small>{blockers[0]?.title || status[task.status] || task.status}</small></span>
         <span class="mx-blocker-count" class:has-blockers={blockers.length > 0}>{blockers.length ? `! ${blockers.length}` : '—'}</span>
-        <span class="mx-task-time" title={task.timing?.partial ? '部分计时记录' : '自然耗时，包含等待与受阻'}>{compactTime(task.timing, now)}</span>
+        <span class="mx-task-time" class:live={task.status !== 'completed'} title={task.timing?.partial ? '部分计时记录' : '自然耗时，包含等待与受阻'}>{compactTime(task.timing, now)}</span>
       </button>
       {#if selected === task.id}
         <div class="mx-expanded" id={`mx-details-${task.id}`} data-testid="matrix-expanded">

@@ -18,12 +18,13 @@ const SQL_SECONDS: u64 = 8;
 // A connection is never reused until its interrupt thread has been cancelled and
 // joined. The same deadline covers integrity, counts, scanning and all retries.
 fn with_sql_deadline<T>(db: &Connection, action: impl FnOnce(std::time::Instant) -> T) -> T {
+    with_interrupt_deadline(db.get_interrupt_handle(),std::time::Instant::now()+std::time::Duration::from_secs(SQL_SECONDS),action)
+}
+fn with_interrupt_deadline<T>(interrupt:rusqlite::InterruptHandle,deadline:std::time::Instant,action:impl FnOnce(std::time::Instant)->T)->T {
     use std::sync::{Arc, Condvar, Mutex};
-    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(SQL_SECONDS);
     let stop=Arc::new((Mutex::new(false),Condvar::new()));
     struct Cancel(Arc<(Mutex<bool>,Condvar)>);
     impl Drop for Cancel {fn drop(&mut self){let (lock,wake)=&*self.0;*lock.lock().unwrap_or_else(|e|e.into_inner())=true;wake.notify_all();}}
-    let interrupt=db.get_interrupt_handle();
     std::thread::scope(|scope| {
         let worker_stop=stop.clone();
         let worker=scope.spawn(move || {
@@ -107,6 +108,51 @@ fn readonly(root: &Path) -> Result<Connection> {
 }
 fn integrity(db: &Connection) -> bool {
     db.query_row("pragma integrity_check(1)", [], |r|r.get::<_,String>(0)).is_ok_and(|s|s=="ok")
+}
+// Copy the whole validated database, including its WAL. No Store write-open or
+// retention migration runs here: episodes, event timing evidence and other
+// tables must survive unchanged. All SQLite handles refer to disposable copies.
+fn complete_copy(analysis:&Path,destination:&Path,deadline:std::time::Instant)->Result<Value>{
+    let mut source=Store::open(analysis,true)?;
+    source.db.execute_batch("pragma query_only=on; pragma trusted_schema=off;").map_err(|_|"完整副本保护失败")?;
+    let (task_rows,events,archives,visible)=with_interrupt_deadline(source.db.get_interrupt_handle(),deadline,|deadline|->Result<_>{
+        if std::time::Instant::now()>=deadline||!integrity(&source.db){return Err("完整副本完整性检查未通过".into());}
+        let mut rows_count=0usize;let mut bytes=0usize;
+        {let mut statement=source.db.prepare("select case when length(cast(id as blob))<=2000 then id else null end,case when length(cast(payload as blob))<=1048576 then payload else null end from tasks limit 10001").map_err(|_|"完整副本任务读取失败")?;
+        let mut rows=statement.query([]).map_err(|_|"完整副本任务读取失败")?;
+        while let Some(row)=rows.next().map_err(|_|"完整副本任务读取失败")?{
+            rows_count+=1;if rows_count>MAX_ROWS||std::time::Instant::now()>=deadline{return Err("完整副本验证超过安全限制".into());}
+            let id:String=row.get(0).map_err(|_|"完整副本任务结构无效")?;let raw:String=row.get(1).map_err(|_|"完整副本任务结构无效")?;
+            bytes=bytes.saturating_add(id.len()).saturating_add(raw.len());
+            if bytes>MAX_READ_BYTES||sanitized_task(&id,&raw).is_none(){return Err("完整副本任务结构无效或超过安全限制".into());}
+        }}
+        let events:i64=source.db.query_row("select count(*) from events",[],|r|r.get(0)).map_err(|_|"完整副本事件读取失败")?;
+        let has_archive:bool=source.db.query_row("select exists(select 1 from sqlite_schema where type='table' and name='completed_tasks')",[],|r|r.get(0)).map_err(|_|"完整副本归档读取失败")?;
+        let archives:i64=if has_archive{source.db.query_row("select count(*) from completed_tasks",[],|r|r.get(0)).map_err(|_|"完整副本归档读取失败")?}else{0};
+        let visible=source.tasks()?.len();
+        Ok((rows_count,events,archives,visible))
+    })?;
+    drop(source);
+    fs::create_dir(destination).map_err(|_|"完整恢复目录创建失败")?;
+    for name in [FILES[0],FILES[1]]{if analysis.join(name).exists(){copy_file(&analysis.join(name),&destination.join(name))?;}}
+    let target=Connection::open_with_flags(destination.join(FILES[0]),OpenFlags::SQLITE_OPEN_READ_WRITE|OpenFlags::SQLITE_OPEN_NO_MUTEX).map_err(|_|"完整恢复副本无法打开")?;
+    target.busy_timeout(std::time::Duration::from_secs(2)).map_err(|_|"完整恢复副本配置失败")?;
+    with_interrupt_deadline(target.get_interrupt_handle(),deadline,|deadline|->Result<()>{
+        if std::time::Instant::now()>=deadline{return Err("完整恢复副本验证超时".into());}
+        target.execute_batch("pragma trusted_schema=off;").map_err(|_|"完整恢复副本保护失败")?;
+        let busy:i64=target.query_row("pragma wal_checkpoint(TRUNCATE)",[],|r|r.get(0)).map_err(|_|"完整恢复日志封存失败")?;
+        if busy!=0{return Err("完整恢复日志仍被占用".into());}
+        let mode:String=target.query_row("pragma journal_mode=DELETE",[],|r|r.get(0)).map_err(|_|"完整恢复日志封存失败")?;
+        if !mode.eq_ignore_ascii_case("delete")||!integrity(&target){return Err("完整恢复副本完整性检查失败".into());}
+        Ok(())
+    })?;
+    drop(target);
+    let mut checked=Store::open(destination,true)?;
+    let checked_count=with_interrupt_deadline(checked.db.get_interrupt_handle(),deadline,|_|checked.tasks())?.len();
+    if checked_count!=visible{return Err("完整恢复副本任务数量不一致".into());}
+    drop(checked);
+    OpenOptions::new().write(true).open(destination.join(FILES[0])).and_then(|f|f.sync_all()).map_err(|_|"完整恢复副本保存失败")?;
+    Ok(json!({"status":"full_recovery","mode":"full","partial":false,"source_task_count":task_rows,"recovered_task_rows":task_rows,"recovered_tasks":visible,"events_recovered":events,"archives_recovered":archives,"omitted_tasks":0,"omitted_events":0,"omitted_archives":0,"rejected_rows":0,"unreadable_rows":0,"scan_complete":true,"destination_integrity_ok":true,"history_recovered":true,"timing_recovered":true}))
 }
 fn sanitized_task(id: &str, raw: &str) -> Option<Value> {
     if id.is_empty() || id.len()>2000 || raw.len()>MAX_PAYLOAD { return None; }
@@ -327,8 +373,15 @@ pub fn call(root: &Path, action: &str, params: &Value) -> Result<Value> {
                 report["source_copy_integrity_ok"]=json!(integrity(&db));
                 report["status"]=json!("inspected_copy");
                 if action=="recover_copy" {
-                    match salvage(&db,&work.join("recovered-data"),deadline) {
-                        Ok(result)=>{report["status"]=result["status"].clone();if result["destination_integrity_ok"]==true {report["paths"]["recovered_database"]=json!(format!("control/database-recovery/{id}/recovered-data/events.sqlite3"));}report["recovery"]=result;},
+                    // Full preservation has priority. A failing full-copy must
+                    // never leave a half-built target for task-only salvage.
+                    let full=complete_copy(&analysis,&work.join("complete-data"),deadline);
+                    let (result,path)=match full{
+                        Ok(result)=>(Ok(result),"complete-data"),
+                        Err(error)=>{report["full_recovery_error"]=json!(error);(salvage(&db,&work.join("recovered-data"),deadline),"recovered-data")}
+                    };
+                    match result {
+                        Ok(mut result)=>{if result["status"]!="full_recovery"{result["mode"]=json!("partial");result["history_recovered"]=json!(false);}report["status"]=result["status"].clone();report["partial"]=json!(result["status"]!="full_recovery");if result["destination_integrity_ok"]==true {report["paths"]["recovered_database"]=json!(format!("control/database-recovery/{id}/{path}/events.sqlite3"));}report["recovery"]=result;},
                         Err(_)=>{report["status"]=json!("recovery_failed");report["error"]=json!("恢复副本未通过检查，不能使用；原文件未改动");}
                     }
                 }
@@ -337,6 +390,7 @@ pub fn call(root: &Path, action: &str, params: &Value) -> Result<Value> {
             Err(_)=>{report["status"]=json!("unreadable_copy");report["source_copy_integrity_ok"]=json!(false);}
         }
     }
+    report["warning"]=json!(if report["status"]=="full_recovery"{"完整副本已验证，事件、耗时和历史归档均保留；尚未切换数据。字节稳定不代表已协调暂停在线写入。"}else if report["status"]=="partial_recovery"{"仅能部分抢救任务快照，事件历史和耗时不能恢复；此副本不可自动启用，原数据和日志已保留。"}else{"副本未通过完整验证，不可启用；原数据和日志已保留。"});
     crate::store::atomic_json(&work.join("report.json"),&report)?;
     crate::store::atomic_json(&base.join("latest.json"),&report)?;
     Ok(report)

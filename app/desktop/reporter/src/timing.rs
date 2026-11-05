@@ -21,15 +21,15 @@ impl Default for State{fn default()->Self{Self{revision:-1,episode:-1,title:Stri
 pub struct TimingIndex{cursor:i64,states:HashMap<String,State>}
 impl TimingIndex{
     pub fn update(&mut self,db:&Connection)->Result<()>{
-        let high:i64=db.query_row("select coalesce(max(rowid),0) from events",[],|r|r.get(0)).map_err(|_|"计时记录读取失败")?;
-        let mut stmt=db.prepare("select task_id,kind,at,payload from events where rowid>?1 and rowid<=?2 and kind in ('progress','plan') order by rowid").map_err(|_|"计时记录读取失败")?;
-        let rows=stmt.query_map([self.cursor,high],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,f64>(2)?,r.get::<_,String>(3)?))).map_err(|_|"计时记录读取失败")?;
+        let high:i64=db.query_row("select coalesce(max(rowid),0) from events",[],|r|r.get(0)).map_err(|error|crate::storage_error::sqlite("timing.read","计时记录读取失败",error))?;
+        let mut stmt=db.prepare("select task_id,kind,at,payload from events where rowid>?1 and rowid<=?2 and kind in ('progress','plan') order by rowid").map_err(|error|crate::storage_error::sqlite("timing.read","计时记录读取失败",error))?;
+        let rows=stmt.query_map([self.cursor,high],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,f64>(2)?,r.get::<_,String>(3)?))).map_err(|error|crate::storage_error::sqlite("timing.read","计时记录读取失败",error))?;
         for row in rows{
-            let (id,kind,at,raw)=row.map_err(|_|"计时记录读取失败")?;let event:Value=serde_json::from_str(&raw).map_err(|_|"计时记录格式无效")?;
+            let (id,kind,at,raw)=row.map_err(|error|crate::storage_error::sqlite("timing.read","计时记录读取失败",error))?;let event:Value=serde_json::from_str(&raw).map_err(|_|"计时记录格式无效 [stage=timing.decode]")?;
             if event["agent_id"].as_str().is_some_and(|s|!s.is_empty()){continue;}
             let state=self.states.entry(id.clone()).or_default();let previous_status=state.status.clone();
             let report=if kind=="progress"{
-                let report=&event["report"];let revision=report["revision"].as_i64().ok_or("计时修订无效")?;
+                let report=&event["report"];let revision=report["revision"].as_i64().ok_or("计时修订无效 [stage=timing.revision]")?;
                 if revision<=state.revision{continue;}
                 let status=report["status"].as_str().unwrap_or("unreported");let title=report["title"].as_str().unwrap_or("");
                 if state.revision<0||["completed","cancelled"].contains(&state.status.as_str())&&!["completed","cancelled"].contains(&status){state.episode=revision;state.evidence.clear();}

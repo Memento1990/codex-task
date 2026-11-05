@@ -5,10 +5,10 @@
   let { tasks, commands, onClose, onSelect }: { tasks: Task[]; commands: Command[]; onClose: () => void; onSelect: (task: Task) => void } = $props();
   let query = $state(''), selectedIndex = $state(0), list: HTMLDivElement;
   const entries = $derived([
-    ...tasks.filter(isReportedTask).map(task => ({ id: `task-${task.id}`, label: taskTitle(task), detail: [task.cwd, task.session_id].join(' · '), kind: '任务', run: () => onSelect(task) })),
-    ...commands.map(command => ({ ...command, kind: '功能' })),
+    ...tasks.filter(isReportedTask).map(task => ({ id: `task-${task.id}`, label: taskTitle(task), detail: [task.cwd, task.session_id].join(' · '), search: [task.current_step, ...task.plan.map(step => step.title), ...task.blockers.flatMap(blocker => [blocker.title, blocker.reason])].join(' '), kind: '任务', run: () => onSelect(task) })),
+    ...commands.map(command => ({ ...command, search: '', kind: '功能' })),
   ]);
-  const matches = $derived(entries.filter(entry => [entry.label, entry.detail].join(' ').toLowerCase().includes(query.trim().toLowerCase())));
+  const matches = $derived(entries.filter(entry => [entry.label, entry.detail, entry.search].join(' ').toLowerCase().includes(query.trim().toLowerCase())));
   $effect(() => { selectedIndex = Math.min(selectedIndex, Math.max(0, matches.length - 1)); });
   function run(index: number) { const entry = matches[index]; if (entry) { onClose(); entry.run(); } }
   function keys(event: KeyboardEvent) {
