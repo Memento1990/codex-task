@@ -1,2 +1,0 @@
-//! Machine-readable build identity for release packaging; contains no secrets.
-pub fn handle()->bool{let args:Vec<String>=std::env::args().collect();if let Some(i)=args.iter().position(|a|a=="--build-identity"){if let Some(path)=args.get(i+1){let key=option_env!("FLOATBOARD_UPDATE_PUBLIC_KEY").unwrap_or("");let value=serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"update_public_key":key,"updater_protocol":1});if crate::store::atomic_json(std::path::Path::new(path),&value).is_err(){std::process::exit(1);}}else{std::process::exit(1);}true}else{false}}

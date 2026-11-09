@@ -15,22 +15,22 @@ A request to “发版” / “发布版本” means a GitHub Release for `Memen
 Run from repository root. This example is illustrative; select the next version and your actual approved source files. The notes file may be outside the repository; if it belongs in the release commit, include it explicitly.
 
 ```powershell
-$version = '0.13.0'
-$notes = 'docs/release-0.13.0.md'
+$version = '2.0.0'
+$notes = 'docs/release-2.0.0.md'
 $stage = @(
   'app/desktop/publish-release.ps1',
   'app/desktop/verify-release.cjs',
   'docs/releasing.md',
-  'docs/release-0.13.0.md'
+  'docs/release-2.0.0.md'
   # Enumerate each other reviewed feature/test/documentation file here.
 )
-$prepared = 'D:\temp\floatboard-release-0.13.0-unique-run'
+$prepared = 'D:\temp\floatboard-release-2.0.0-unique-run'
 $gh = 'D:\temp\floatboard-release-tools-20261103\gh\bin\gh.exe'
 ./app/desktop/publish-release.ps1 -Version $version -NotesFile $notes `
   -StagePaths $stage -PreparedDirectory $prepared -GhPath $gh
 ```
 
-Prepare refuses unrelated tracked dirt and unapproved untracked application files; unrelated untracked research/design files are not staged. Version metadata and the three lockfiles are automatically allowlisted. It updates package/Tauri JSON and both Cargo package versions, updates pnpm/Cargo lockfiles **offline** (Cargo metadata preserves existing dependency resolutions), installs frozen offline dependencies without lifecycle scripts, then runs frontend tests/check/build, core Rust tests, all native Rust tests, reporter/launcher/updater/release-signer build and Tauri release build.
+Prepare refuses unrelated tracked dirt and unapproved untracked application files; unrelated untracked research/design files are not staged. It checks whitespace in tracked changes and every allowlisted new file before building, without staging them. Version metadata and the unified Cargo and pnpm lockfiles are automatically allowlisted. It updates package/Tauri JSON and all six workspace package versions, updates pnpm/Cargo lockfiles **offline** (Cargo metadata preserves existing dependency resolutions), installs frozen offline dependencies without lifecycle scripts, then runs frontend tests/check/build, core Rust tests, all native Rust tests, Agent/client/maintenance/installer/launcher/updater/release-signer build and Tauri release build. Core test preparation explicitly builds its Agent/client/shell process fixtures in the new target before running installer tests, so a clean target never relies on old local binaries.
 
 Every run requires a new output directory outside the repository and `LOCALAPPDATA`, with its own `target` directory. Live Reporter executables in historical targets are neither overwritten nor terminated. Failed preparation may leave version/lock edits and incomplete external outputs: inspect them; do not blindly reset unrelated work. A retry requires a new directory; already bumped working-tree version edits can be retained because the version increase is checked against committed HEAD.
 

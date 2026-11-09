@@ -39,9 +39,6 @@ test-results/
 *.bak
 *.tmp
 
-# Synthetic fixture required by Rust include_bytes! compatibility tests
-!/app/desktop/reporter/tests/fixtures/legacy-events.sqlite3
-
 # Local research, private acceptance evidence and historical prototypes
 /verification/
 /evidence/

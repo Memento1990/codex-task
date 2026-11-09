@@ -15,8 +15,8 @@
 
 ## 证据边界
 
-仓库隔离验证过 Codex Desktop 0.166.0-alpha.5.1 的 MCP-tool Hook 和 additionalContext；没有验证所有客户端都能热加载已有会话。另起 app-server 不能替代重载既有正式进程。
+当前 HTTP MCP/OAuth 与 Hook 的隔离验证使用 Desktop 实际采用的 Codex 二进制；结果见 `artifacts/agent-runtime-20261109/transport-current-binary.log`。没有验证所有客户端都能热加载已有会话，另起 app-server 不能替代重载既有正式进程。
 
 ## 版本显示
 
-主窗口页脚和更新页初始值共用 GUI 包版本元数据，不再写死 0.9.0，也不取常驻旧 Reporter 的版本。更新页后续快照由当前 GUI 内的更新服务提供。发布时仍核对 package、Tauri、Rust 四程序身份一致。
+主窗口页脚和更新页初始值共用 GUI 包版本元数据，更新页后续快照由 GUI 内的更新服务提供。Agent 身份单独返回协议、schema、profile 和数据库身份。打包时逐个核对八个运行程序的版本、公钥和更新协议。

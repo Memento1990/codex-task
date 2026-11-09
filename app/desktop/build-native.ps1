@@ -1,4 +1,4 @@
-param([ValidateSet('check','release','test-core','reporter')][string]$Phase = 'release')
+param([ValidateSet('check','release','test-core','test-runtime','agent')][string]$Phase = 'release')
 $ErrorActionPreference = 'Stop'
 # Public trust anchor is source-controlled; the private key is never a build input.
 $taskPublicKey = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'update-public-key.txt') -Raw).Trim()
@@ -14,14 +14,17 @@ $env:INCLUDE = (Join-Path $taskVc 'include') + ';' + (Join-Path $taskSdk ('Inclu
 $env:VCToolsInstallDir = $taskVc + '\'
 $env:WindowsSdkDir = $taskSdk + '\'
 $env:WindowsSDKVersion = $taskSdkVersion + '\'
-Set-Location -LiteralPath $PSScriptRoot
-$taskManifest = if ($Phase -in @('test-core','reporter')) { 'reporter/Cargo.toml' } else { 'src-tauri/Cargo.toml' }
+Push-Location -LiteralPath $PSScriptRoot
+try {
+$taskManifest = 'Cargo.toml'
 $taskMetadata = & cargo metadata --manifest-path $taskManifest --no-deps --format-version 1 --locked
 if ($LASTEXITCODE -ne 0) { throw '无法解析 Cargo 构建目录' }
 $taskTarget = ($taskMetadata | ConvertFrom-Json).target_directory
 Write-Output "Cargo target: $taskTarget"
-if ($Phase -eq 'test-core') { & cargo test --manifest-path reporter/Cargo.toml --locked }
-elseif ($Phase -eq 'reporter') { & cargo build --manifest-path reporter/Cargo.toml --release --locked }
+if ($Phase -eq 'agent') { & cargo build --manifest-path Cargo.toml -p floatboard-agent -p floatboard-client -p floatboard-shell --locked }
+elseif ($Phase -eq 'test-runtime') { & cargo test --manifest-path Cargo.toml -p floatboard-protocol -p floatboard-client -p floatboard-agent --locked }
+elseif ($Phase -eq 'test-core') { & cargo build --manifest-path Cargo.toml -p floatboard-agent -p floatboard-client -p floatboard-shell --locked; if($LASTEXITCODE -ne 0){throw 'Installer test prerequisites failed'}; & cargo test --manifest-path Cargo.toml -p floatboard-storage -p floatboard-shell --locked }
 elseif ($Phase -eq 'check') { & cargo check --manifest-path src-tauri/Cargo.toml --locked }
-else { & node (Join-Path $PSScriptRoot 'node_modules/@tauri-apps/cli/tauri.js') build --no-bundle '--' --locked }
+else { & cargo build --manifest-path Cargo.toml -p floatboard-agent -p floatboard-client -p floatboard-shell --release --locked; if($LASTEXITCODE -ne 0){throw 'Agent/tools release build failed'}; & node (Join-Path $PSScriptRoot 'node_modules/@tauri-apps/cli/tauri.js') build --no-bundle '--' --locked }
 if ($LASTEXITCODE -ne 0) { throw "原生 $Phase 失败" }
+} finally { Pop-Location }

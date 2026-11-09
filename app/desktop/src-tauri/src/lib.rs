@@ -3,7 +3,7 @@ use std::os::windows::process::CommandExt;
 use serde_json::{json, Value};
 use tauri::{Emitter, Manager, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}, WebviewUrl, WebviewWindowBuilder, LogicalSize, LogicalPosition};
 use tauri_plugin_opener::OpenerExt;
-use floatboard_core::desktop::Engine;
+use floatboard_client::desktop::Engine;
 mod dock;
 mod utility_windows;
 use utility_windows::Kind as UtilityKind;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 struct ToastQueue { ready: bool, pending: Vec<Value> }
-struct State { utility_busy:Mutex<HashMap<String,bool>>, preferences_transaction:tauri::async_runtime::Mutex<()>, engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue>, updates: Arc<floatboard_core::update::UpdateService>, dock:Mutex<dock::Dock>, weixin_lab:Arc<Mutex<Option<Arc<floatboard_core::weixin_lab::WeixinLab>>>> }
+struct State { utility_busy:Mutex<HashMap<String,bool>>, preferences_transaction:tauri::async_runtime::Mutex<()>, engine: Arc<Mutex<Engine>>, toasts: Mutex<ToastQueue>, updates: Arc<floatboard_shell::update::UpdateService>, dock:Mutex<dock::Dock>, weixin_lab:Arc<Mutex<Option<Arc<floatboard_shell::weixin_lab::WeixinLab>>>> }
 
 fn development_mode()->bool{cfg!(debug_assertions)||std::env::var("FLOATBOARD_DEVELOPMENT").as_deref()==Ok("1")||std::env::current_exe().is_ok_and(|path|path.components().any(|part|part.as_os_str()=="target"||part.as_os_str()=="targets"))}
 
@@ -23,9 +23,8 @@ async fn weixin_lab_action(window:tauri::WebviewWindow,state:tauri::State<'_,Sta
     tauri::async_runtime::spawn_blocking(move||{
         let service={let mut guard=slot.lock().map_err(|_|"微信验证状态异常")?;
             if guard.is_none(){let adapter=engine.lock().map_err(|_|"本地状态异常")?;
-                if adapter.data_location()["restart_required"]==true{return Err("数据目录已迁移，请先重启隔离实例".into());}
-                let directory=floatboard_core::bridge::control_root(&adapter.root).join("weixin-lab");
-                *guard=Some(Arc::new(floatboard_core::weixin_lab::WeixinLab::new(directory)?));}
+                let directory=adapter.root.join("control/weixin-lab");
+                *guard=Some(Arc::new(floatboard_shell::weixin_lab::WeixinLab::new(directory)?));}
             guard.as_ref().ok_or("微信验证未初始化")?.clone()};
         service.call(&action,&params)
     }).await.map_err(|_|"微信验证操作中断".to_string())?
@@ -37,10 +36,10 @@ async fn update_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:
     if development_mode() && action!="snapshot"{return Err("开发调试版禁用正式更新，请发布GitHub Release后在正式版更新".into());}
     if action=="install"{
         if params["confirmed"]!=true{return Err("请确认重启看板后更新".into());}
-        let root=state.engine.lock().map_err(|_|"本地状态异常")?.begin_repair()?;
+        let root=state.engine.lock().map_err(|_|"本地状态异常")?.root.clone();
         let service=state.updates.clone();let failed=service.clone();
-        let result=tauri::async_runtime::spawn_blocking(move||floatboard_core::update_install::prepare(&service,&root)).await.unwrap_or_else(|_|Err("更新准备中断".into()));
-        if let Err(error)=result{if let Ok(mut engine)=state.engine.lock(){engine.cancel_repair();}failed.install_failed(&error);return Err(error);}
+        let result=tauri::async_runtime::spawn_blocking(move||floatboard_shell::update_install::prepare(&service,&root)).await.unwrap_or_else(|_|Err("更新准备中断".into()));
+        if let Err(error)=result{failed.install_failed(&error);return Err(error);}
         app.exit(0);return Ok(json!({"state":"installing"}));
     }
     let service=state.updates.clone();
@@ -80,53 +79,30 @@ async fn save_preferences(app:&tauri::AppHandle,state:&State,patch:Value)->Resul
     // even when separate settings WebViews submit controls concurrently.
     let _transaction=state.preferences_transaction.lock().await;
     let worker=state.engine.clone();
-    let previous=tauri::async_runtime::spawn_blocking(move||{let engine=worker.lock().map_err(|_|"本地状态异常".to_string())?;Ok::<_,String>(floatboard_core::desktop::load_options(&engine.root))}).await.map_err(|_|"设置读取已中断")??;
-    let desired=floatboard_core::desktop::merge_options(&previous,&patch)?;
-    let ui=app.clone();let before=previous.clone();
-    let undo=dock::on_main(app,move||apply_native_preferences(&ui,&before,&desired)).await?;
+    let previous=tauri::async_runtime::spawn_blocking(move||{let engine=worker.lock().map_err(|_|"本地状态异常".to_string())?;Ok::<_,String>(engine.options())}).await.map_err(|_|"设置读取已中断")??;
+    floatboard_protocol::preferences::merge_options(&previous,&patch)?;
     let worker=state.engine.clone();
-    let result=tauri::async_runtime::spawn_blocking(move||worker.lock().map_err(|_|"本地状态异常".to_string())?.call("preferences",patch)).await.unwrap_or_else(|_|Err("设置保存已中断".into()));
-    match result{
-        Ok(options)=>{if options["notifications"]==false{if let Ok(mut queue)=state.toasts.lock(){queue.pending.clear();}}let _=app.emit("host-event",json!({"type":"options","options":options}));Ok(options)},
-        Err(error)=>{let ui=app.clone();match dock::on_main(app,move||undo.rollback(&ui)).await{Ok(())=>Err(error),Err(rollback)=>Err(format!("{error}；{rollback}"))}}
-    }
+    let mut options=tauri::async_runtime::spawn_blocking(move||worker.lock().map_err(|_|"本地状态异常".to_string())?.call("preferences",patch)).await.map_err(|_|"设置提交结果尚未确认")??;
+    let ui=app.clone();let before=previous;let desired=options.clone();
+    if let Err(error)=dock::on_main(app,move||apply_native_preferences(&ui,&before,&desired).map(|_|())).await{options["native_error"]=json!(error);}
+    if options["notifications"]==false{if let Ok(mut queue)=state.toasts.lock(){queue.pending.clear();}}
+    let _=app.emit("host-event",json!({"type":"options","options":options}));Ok(options)
 }
 
 #[tauri::command]
 async fn bridge(app:tauri::AppHandle, window:tauri::WebviewWindow, state:tauri::State<'_,State>, method:String, mut params:Value)->Result<Value,String> {
-    let allowed = ["snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","migrate_data","notification_snapshot","notification_save","notification_channel_save","notification_channel_delete","notification_test","notification_retry","notification_clear","notification_weixin_action","database_repair"];
-    let permitted=if window.label()=="main"{allowed.contains(&method.as_str())}else if let Some(kind)=UtilityKind::from_label(window.label()){kind.bridge(&method)}else{["completed","toast"].contains(&window.label())&&method=="snapshot"};
+    let allowed = ["watch","snapshot","preferences","preview","connect","connect_request","disconnect","window_load","window_save","data_location","notification_snapshot","notification_save","notification_channel_save","notification_channel_delete","notification_test","notification_retry","notification_clear","notification_weixin_action","backup","diagnostics","pairing_list","pairing_approve","pairing_revoke"];
+    let permitted=if window.label()=="main"{allowed.contains(&method.as_str())}else if let Some(kind)=UtilityKind::from_label(window.label()){kind.bridge(&method)}else{["completed","toast"].contains(&window.label())&&["watch","snapshot"].contains(&method.as_str())};
     if !permitted { return Err("此窗口不允许该操作".into()); }
     if window.label()!="main" { if let Some(params)=params.as_object_mut(){params.insert("notify".into(),json!(false));} }
     if method=="preferences"{return save_preferences(&app,&state,params).await;}
+    if method=="watch"{let client=state.engine.lock().map_err(|_|"本地状态异常")?.client.clone();return tauri::async_runtime::spawn_blocking(move||client.call("watch",params)).await.map_err(|_|"订阅已中断")?;}
     let worker=state.engine.clone();
     let name=method.clone();
     let result=tauri::async_runtime::spawn_blocking(move||{
-        if name.starts_with("notification_") {
-            let service={worker.lock().map_err(|_|"本地状态异常".to_string())?.notification_service()?};
-            return service.call(&name,params);
-        }
-        if name=="database_repair" {
-            let action=params["action"].as_str().unwrap_or("snapshot").to_owned();
-            if let Some(obj)=params.as_object_mut(){obj.remove("action");obj.remove("notify");}
-            if action=="snapshot"{
-                let root=worker.lock().map_err(|_|"本地状态异常")?.root.clone();
-                return floatboard_core::repair_restart::status(&root);
-            }
-            if action!="repair_restart" || params["confirmed"]!=true || params.as_object().is_none_or(|o|o.keys().any(|k|k!="confirmed")){return Err("请确认修复并重启，不接受额外参数".into());}
-            let root=worker.lock().map_err(|_|"本地状态异常")?.begin_repair()?;
-            let result=floatboard_core::repair_restart::prepare(&root);
-            if result.is_err(){if let Ok(mut engine)=worker.lock(){engine.cancel_repair();}}
-            return result;
-        }
         worker.lock().map_err(|_|"本地状态异常".to_string())?.call(&name,params)
     }).await.map_err(|_|"本地操作已中断")??;
-    if method=="database_repair" && result["status"]=="ready"{app.exit(0);return Ok(result);}
-    if method=="snapshot" && window.label()=="main"{
-        let _=floatboard_core::update_install::acknowledge();
-        let root=state.engine.lock().map_err(|_|"本地状态异常")?.root.clone();
-        let _=floatboard_core::repair_restart::acknowledge(&root,&result);
-    }
+    if method=="snapshot"&&window.label()=="main"&&result["storage"]["status"]=="ok"{let client=state.engine.lock().map_err(|_|"本地状态异常")?.client.clone();let instance=result["agent_instance_id"].clone();tauri::async_runtime::spawn_blocking(move||{let _=client.call("gui_ready",json!({"agent_instance_id":instance}));});}
     Ok(result)
 }
 
@@ -166,7 +142,7 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
     if let Some(kind)=UtilityKind::from_label(label){if !kind.host(&action){return Err("窗口操作不允许".into());}}
     else if !["main","completed","toast"].contains(&label){return Err("窗口操作不允许".into());}
     match action.as_str() {
-        "utility_open"=>{let kind=UtilityKind::parse(value.as_str().unwrap_or("")).ok_or("未知功能窗口")?;if label!="main"&&!(label=="utility-settings"&&matches!(kind,UtilityKind::Notifications|UtilityKind::Updates|UtilityKind::Integration|UtilityKind::Repair)){return Err("此窗口不能打开该功能".into());}open_utility(&app,kind)?;},
+        "utility_open"=>{let kind=UtilityKind::parse(value.as_str().unwrap_or("")).ok_or("未知功能窗口")?;if label!="main"&&!(label=="utility-settings"&&matches!(kind,UtilityKind::Notifications|UtilityKind::Updates|UtilityKind::Integration|UtilityKind::Maintenance)){return Err("此窗口不能打开该功能".into());}open_utility(&app,kind)?;},
         "utility_busy"=>{if UtilityKind::from_label(label).is_none(){return Err("非功能窗口".into());}state.utility_busy.lock().map_err(|_|"窗口状态异常")?.insert(label.to_string(),value.as_bool().unwrap_or(true));},
         "utility_close"=>{if UtilityKind::from_label(label).is_none(){return Err("非功能窗口".into());}if state.utility_busy.lock().map_err(|_|"窗口状态异常")?.get(label).copied().unwrap_or(true){return Err("请等待当前操作完成".into());}window.destroy().map_err(|e|e.to_string())?;},
         "hide" => { if label=="main" { if let Some(w)=app.get_webview_window("completed"){let _=w.hide();} } window.hide().map_err(|e|e.to_string())?; },
@@ -236,10 +212,10 @@ async fn host_action(app:tauri::AppHandle, window:tauri::WebviewWindow, state:ta
 }
 
 pub fn run() {
-    if floatboard_core::update_install::startup_gate().is_err(){return;}
     let development=development_mode();
     if development && !(std::env::args().any(|arg|arg=="--isolated-instance") && std::env::args().any(|arg|arg=="--data-dir") && ["CODEX_HOME","LOCALAPPDATA","WEBVIEW2_USER_DATA_FOLDER"].iter().all(|key|std::env::var_os(key).is_some())){eprintln!("开发构建必须通过dev-isolated.ps1启动，禁止使用正式数据目录");return;}
-    let root=floatboard_core::data_root();
+    let profile=match floatboard_client::Profile::configured_path().and_then(|p|floatboard_client::Profile::load(&p)){Ok(profile)=>profile,Err(error)=>{eprintln!("{error}");return;}};
+    let root=profile.root.clone();
     // Explicit isolated acceptance runs must not activate the user's live GUI.
     // Normal launches retain the single-instance behavior.
     let isolated=std::env::args().any(|arg|arg=="--isolated-instance") && std::env::args().any(|arg|arg=="--data-dir") && std::env::var_os("CODEX_HOME").is_some();
@@ -247,15 +223,14 @@ pub fn run() {
     let builder=if isolated{builder}else{builder.plugin(tauri_plugin_single_instance::init(|app,_,_|show_main(app)))};
     builder.plugin(tauri_plugin_opener::init())
         .setup(move|app|{
-    let current=std::env::current_exe().expect("程序路径不可用");
-    let collector_start=floatboard_core::runtime::spawn_worker(&root);
-    let mut adapter=Engine::new(root.clone(),current);
-    adapter.set_collector_start_result(collector_start);
+    let mut adapter=Engine::new(profile.clone());
+    if adapter.client.call("identity",json!({})).is_err()&&profile.environment=="production"{let config=floatboard_client::Profile::configured_path()?;let _=floatboard_client::scheduled::run(&profile,&config);}
+
     let stored=adapter.call("window_load",json!({})).unwrap_or(json!({}));
-    adapter.start_notifications();
-    let options=floatboard_core::desktop::load_options(&root);
+    let _=adapter.call("snapshot",json!({"notify":false}));
+    let options=adapter.options();
     let worker=Arc::new(Mutex::new(adapter));
-    let updates=floatboard_core::update::UpdateService::new(root.clone());
+    let updates=floatboard_shell::update::UpdateService::new(root.clone());
     let scheduled=updates.clone();std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(20));loop{if !development && scheduled.snapshot()["preferences"]["auto_check"]==true{let _=scheduled.check();}std::thread::sleep(std::time::Duration::from_secs(6*60*60));}});
     app.manage(State{utility_busy:Mutex::new(HashMap::new()),preferences_transaction:tauri::async_runtime::Mutex::new(()),engine:worker.clone(),toasts:Mutex::new(ToastQueue::default()),updates,dock:Mutex::new(dock::Dock::new(!options["show_taskbar"].as_bool().unwrap_or(false))),weixin_lab:Arc::new(Mutex::new(None))});
 

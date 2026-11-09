@@ -30,9 +30,9 @@ function verify(directory, version, keyFile) {
   assert.match(sigText, /^[A-Za-z0-9+/]{86}==$/);
   assert(crypto.verify(null, manifestBytes, publicKey, Buffer.from(sigText, 'base64')), 'Ed25519 signature mismatch');
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
-  assert.equal(manifest.schema, 1); assert.equal(manifest.version, version);
-  assert.equal(manifest.platform, 'windows-x86_64'); assert.equal(manifest.updater_protocol, 1);
-  assert.equal(manifest.minimum_version, '0.9.0'); assert.equal(manifest.data_compatibility, 'backward-compatible');
+  assert.equal(manifest.schema, 2); assert.equal(manifest.version, version);
+  assert.equal(manifest.platform, 'windows-x86_64'); assert.equal(manifest.updater_protocol, 2);
+  assert.match(manifest.minimum_version,/^\d+\.\d+\.\d+$/);assert.equal(manifest.agent_protocol,2);assert.equal(manifest.database_schema_min,2);assert.equal(manifest.database_schema_max,2);
   assert.equal(manifest.url, `https://github.com/Memento1990/codex-task/releases/download/v${version}/${names[1]}`);
   const update = read(names[1]); assert.equal(manifest.size, update.length); assert.equal(manifest.sha256, sha(update));
   return [...names, 'SHA256SUMS.txt'].map(name => {const bytes=read(name); return {name, size:bytes.length, sha256:sha(bytes)};});
@@ -46,7 +46,7 @@ function selfTest() {
     const version='1.2.3', portable=`CodexFloatboard-${version}-windows-x64.zip`, update=`Floatboard-update-${version}-windows-x64.zip`;
     fs.writeFileSync(path.join(dir,portable),'fixture portable'); fs.writeFileSync(path.join(dir,update),'fixture update');
     const bytes=fs.readFileSync(path.join(dir,update));
-    const manifest=Buffer.from(JSON.stringify({schema:1,version,platform:'windows-x86_64',updater_protocol:1,minimum_version:'0.9.0',data_compatibility:'backward-compatible',url:`https://github.com/Memento1990/codex-task/releases/download/v${version}/${update}`,size:bytes.length,sha256:sha(bytes)}));
+    const manifest=Buffer.from(JSON.stringify({schema:2,version,platform:'windows-x86_64',updater_protocol:2,minimum_version:version,database_schema_min:2,database_schema_max:2,agent_protocol:2,url:`https://github.com/Memento1990/codex-task/releases/download/v${version}/${update}`,size:bytes.length,sha256:sha(bytes)}));
     fs.writeFileSync(path.join(dir,'update-manifest.json'),manifest);
     fs.writeFileSync(path.join(dir,'update-manifest.json.sig'),crypto.sign(null,manifest,privateKey).toString('base64'));
     const names=[portable,update,'update-manifest.json','update-manifest.json.sig'];

@@ -6,7 +6,7 @@ export type Task = { archived?:boolean; source_task_id?:string; id: string; sess
 export type DockSummaryMode = 'always'|'hover'|'never';
 export const dockSummaryMode = (options: {dock_summary_mode?:unknown;dock_hover_summary?:boolean}): DockSummaryMode => ['always','hover','never'].includes(String(options.dock_summary_mode)) ? options.dock_summary_mode as DockSummaryMode : options.dock_hover_summary === false ? 'never' : 'hover';
 export const dockSummaryVisible = (mode: DockSummaryMode, hovered: boolean): boolean => mode === 'always' || mode === 'hover' && hovered;
-export type Options = { dock_summary_mode?: DockSummaryMode; dock_hover_summary?: boolean; auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
+export type Options = { native_error?:string; dock_summary_mode?: DockSummaryMode; dock_hover_summary?: boolean; auto_start: boolean; show_taskbar: boolean; theme: string; notifications: boolean; notification_seconds: number };
 export type Notice = { task_id: string; title: string; lines: string[]; tab: number; sticky?: boolean };
 export const normalizeTab = (value: unknown): number => value === 1 || value === 2 ? value : 0;
 export const isReportedTask = (task: Task): boolean => task.status !== 'unreported' || (task.plan?.length || 0) > 0;
@@ -14,9 +14,9 @@ export const taskTitle = (task: Task): string => task.title || (task.plan.length
 export const isBlockerNotice = (notice: Notice): boolean => notice.tab === 1;
 export const dragThresholdReached = (x:number,y:number,nextX:number,nextY:number,buttons:number): boolean => (buttons & 1) === 1 && Math.hypot(nextX-x,nextY-y) >= 4;
 export const noticeAutoDismiss = (notice: Notice): boolean => notice.sticky !== true;
-export type Connection = { codex_home?:string;codex_mode?:'local'|'isolated';isolated?:boolean;state: string; config_state?: string; error?: string; diagnostics?: unknown; recovery_required?: boolean; hook_seen?: boolean; hook_error?: string; upgrade_available?: boolean; runtime_update_available?: boolean; mcp_connected?: boolean; mcp_connected_at?:number|null; session_received_at?:number|null; sync_verified_at?:number|null };
+export type Connection = { codex_home?:string;codex_mode?:'local'|'isolated';isolated?:boolean;state: string; config_state?: string; error?: string; diagnostics?: unknown; hook_seen?: boolean; hook_error?: string; mcp_connected?: boolean; mcp_connected_at?:number|null; session_received_at?:number|null; sync_verified_at?:number|null };
 export function connectionTone(connection:Connection):'confirmed'|'neutral'|'problem' {
-  if(['conflict','partial','error','recovery_required'].includes(connection.state)||connection.config_state==='partial'||connection.config_state==='error')return 'problem';
+  if(['conflict','partial','error'].includes(connection.state)||connection.config_state==='partial'||connection.config_state==='error')return 'problem';
   if(['session_received','sync_verified'].includes(connection.state)||connection.mcp_connected===true)return 'confirmed';
   return 'neutral';
 }
@@ -24,36 +24,14 @@ export function evidenceTime(value:number|null|undefined):string {
   return typeof value==='number'&&Number.isFinite(value)&&value>0?new Date(value*1000).toLocaleString('zh-CN',{hour12:false}):'未提供证据时间';
 }
 export const runningTaskSyncPrompt = '请将本会话正在进行的任务同步到 Codex 任务侧窗。仅使用本会话 Hook 提供的绑定信息和对应连接的 report_progress，基于当前可确认上下文汇报任务标题、完整步骤及状态、当前步骤、开放卡点和已有验收证据。这是接入后的当前快照，不补造历史、计时或证据。保持原任务继续执行，不因汇报创建子 Agent。若工具或有效绑定不可用，请说明尚未载入，不要猜会话 ID/token、手动调用 hook_context、修改配置或中断任务。';
-export type IntegrationStep = { title:string; description:string; action:'connect'|'recover'|'check'|'details'|'done'; button:string; stage:number; verified:boolean };
-export function integrationStep(connection: Connection): IntegrationStep {
-  const step=(title:string,description:string,action:IntegrationStep['action'],button:string,stage:number,verified=false):IntegrationStep=>({title,description,action,button,stage,verified});
-  if(connection.config_state==='partial')return step('配置需要检查','接入配置部分缺失，请查看差异与诊断。不会把连接待确认当作配置完整，也不会自动覆盖配置。','details','查看配置问题',0);
-  if(connection.config_state==='error')return step('配置需要检查','配置读取或校验失败，请先查看诊断。已有回执不能代替配置校验。','details','查看配置问题',0);
-  switch(connection.state){
-    case 'missing': return step('尚未配置','看板会在当前用户目录安装小型连接程序，并配置 Codex 接入。不需要管理员权限，也不会修改项目。','connect','连接 Codex',0);
-    case 'recovery_required': return step('发现旧版连接','先查看将恢复的配置，再确认恢复连接。未确认前不会接管或覆盖旧配置。','recover','查看并恢复连接',0);
-    case 'conflict': return step('连接配置需要确认','发现不能安全接管的配置。看板未覆盖或追加重复配置，请先查看诊断中的冲突项。','details','查看冲突详情',0);
-    case 'awaiting_reload':
-    case 'awaiting_session':
-    case 'ready':
-    case 'configured': return connection.mcp_connected
-      ?step('连接已确认 · 等待会话事件','Codex 曾加载此连接组件，尚未观察到本次接入的会话事件。空闲不算异常；请在 Codex 新建或继续真实会话，再刷新状态。','check','刷新状态',2)
-      :step('配置完成 · 连接待确认','本工具配置已写入，尚未收到 Codex 回执；这不代表未授权。若已在 Codex 授权，请新建或继续一次真实会话，再刷新状态。可以稍后完成，无需反复授权或强制重启。','check','刷新状态',1);
-    case 'partial': return step('配置需要检查','接入配置部分缺失，请查看差异与诊断。现有证据不能代替完整配置检查。','details','查看配置问题',0);
-    case 'session_received': return step('会话事件已收到','会话事件链路已确认；任务同步尚未验证，不代表未接入。正常使用 Codex，真实任务汇报到达后将继续验证。','check','刷新状态',2);
-    case 'sync_verified': return step('接入与任务同步已验证','已收到真实任务汇报，最近证据时间见下方。该回执不代表 Codex 此刻实时在线。','done','完成',3,true);
-    case 'error': return step('暂时无法验证连接','查看诊断以确认原因。检查只读取当前状态，不会重写配置，也不会停止 Codex。','check','重新检查',0);
-    default: return step('连接尚待验证','当前状态尚未得到完整验证。可检查连接或查看高级诊断；历史记录不代表当前连接已同步。','check','检查连接',1);
-  }
-}
 export function connectionStatus(connection: Connection): string {
   if(['partial','error'].includes(connection.config_state || ''))return '配置需要检查';
   if(['ready','configured','awaiting_reload','awaiting_session'].includes(connection.state))return connection.mcp_connected?'连接已确认 · 待会话':'配置完成 · 连接待确认';
-  return ({missing:'尚未配置',recovery_required:'旧连接待恢复',conflict:'配置需要检查',partial:'配置需要检查',session_received:'会话事件已收到',sync_verified:'接入与同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
+  return ({missing:'尚未配置',conflict:'配置需要检查',partial:'配置需要检查',session_received:'会话事件已收到',sync_verified:'接入与同步已验证',error:'接入异常'} as Record<string,string>)[connection.state] || '连接待验证';
 }
 export type StorageDiagnostic = {stage:string;sqlite_code:number|null;sqlite_extended_code:number|null};
-export type Snapshot = { collector?:{diagnostic?:StorageDiagnostic;status:string;heartbeat_age:number|null;pid:number|null;version:string|null;start_error:string|null;data_root:string;guidance:string}; storage?: {status:'ok'|'error';message:string;diagnostic?:StorageDiagnostic}; tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown; data_location?:DataLocation; restart_required?:boolean };
-export type DataLocation = { current: string; restart_required: boolean };
+export type Snapshot = { database_instance_id?:string; commit_sequence?:number; collector?:{diagnostic?:StorageDiagnostic;status:string;heartbeat_age:number|null;pid:number|null;version:string|null;start_error:string|null;data_root:string;guidance:string}; storage?: {status:'ok'|'error';message:string;diagnostic?:StorageDiagnostic}; tasks: Task[]; notices: Notice[]; healthy: boolean; now: number; options: Options; connection: Connection; diagnostics?: unknown; data_location?:DataLocation };
+export type DataLocation = { current: string };
 export type UpdateSnapshot = {current_version:string;state:string;latest_version?:string|null;release_notes?:string|null;release_url?:string|null;downloaded_bytes:number;total_bytes?:number|null;error?:string|null;last_checked?:number|null;preferences:{auto_check:boolean;auto_download:boolean};supported:boolean;installation_result?:{status?:string;version?:string;message?:string}|null};
 export function updatePresentation(update:UpdateSnapshot):{title:string;description:string;action:'check'|'download'|'install'|null;button:string} {
   if(!update.supported || update.state==='unsupported')return {title:'当前安装方式暂不支持自动更新',description:'当前构建未配置可用的更新签名或安装方式不受支持，无法安全自动更新。可继续使用当前版本，或查看官方发布页面。',action:null,button:''};

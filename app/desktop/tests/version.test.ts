@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 test('running task onboarding only guides the original task conversation',()=>{
-  const source=readFileSync(new URL('../src/App.svelte',import.meta.url),'utf8');
-  for(const text of ['复制同步指令','回到原任务聊天','等当前步骤结束后粘贴发送','无需新建或停止任务','任务真实汇报到达后，本页将继续验证'])assert.ok(source.includes(text),text);
+  const source=readFileSync(new URL('../src/Integration.svelte',import.meta.url),'utf8');
+  for(const text of ['复制同步指令','runningTaskSyncPrompt'])assert.ok(source.includes(text),text);
   assert.doesNotMatch(source,/侧边会话|侧边提问/);
 });
 

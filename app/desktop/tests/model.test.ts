@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runningTaskSyncPrompt, isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, integrationStep, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, summaryTone, taskCounts, matchesTask, filterTasks, type Task } from '../src/model.ts';
+import { runningTaskSyncPrompt, isBlockerNotice, dragThresholdReached, dockSummaryMode, dockSummaryVisible, dockSummary, noticeAutoDismiss, normalizeTab, isReportedTask, taskTitle, type Notice, connectionTone, evidenceTime, safeUpdateUrl, updateBytes, updatePresentation, updateProgress, type UpdateSnapshot, connectionStatus, createTestNoticeFactory, defaults, diagnosticText, elapsed, noticeStack, safeReference, visibleTasks, summaryTone, taskCounts, matchesTask, filterTasks, type Task } from '../src/model.ts';
 test('running task sync asks for a bound current snapshot without fabricated history',()=>{
   for(const text of ['本会话 Hook','report_progress','当前快照','不补造历史','不要猜会话 ID/token','中断任务'])assert.ok(runningTaskSyncPrompt.includes(text));
 });
@@ -132,32 +132,14 @@ test('partial timer elapsed remains cumulative across paused intervals',()=>{
   assert.equal(elapsed({started_at:null,ended_at:200,seconds:0,since:null,partial:true},1000),'起点未记录');
 });
 test('historical hooks and local config do not imply a verified current connection',()=>{
-  for(const state of ['ready','partial','awaiting_reload','awaiting_session','session_received','error']){
-    assert.equal(integrationStep({state,hook_seen:true,mcp_connected:true}).verified,false);
-  }
   assert.equal(connectionStatus({state:'ready',hook_seen:true}),'配置完成 · 连接待确认');
   assert.equal(connectionStatus({state:'session_received',hook_seen:true}),'会话事件已收到');
   assert.equal(connectionStatus({state:'sync_verified'}),'接入与同步已验证');
-  assert.equal(integrationStep({state:'sync_verified'}).verified,true);
-  assert.equal(integrationStep({state:'sync_verified',runtime_update_available:true}).verified,true);
-  assert.equal(integrationStep({state:'sync_verified',runtime_update_available:true}).action,'done');
-  assert.equal(connectionStatus({state:'sync_verified',runtime_update_available:true}),'接入与同步已验证');
-});
-test('wizard provides one safe next action for each connection phase',()=>{
-  assert.equal(integrationStep({state:'missing'}).action,'connect');
-  assert.equal(integrationStep({state:'recovery_required',recovery_required:true}).action,'recover');
-  assert.equal(integrationStep({state:'conflict'}).action,'details');
-  for(const state of ['awaiting_reload','awaiting_session','session_received','error','future_state'])assert.equal(integrationStep({state}).action,'check');
-  assert.equal(integrationStep({state:'sync_verified'}).action,'done');
-  assert.match(integrationStep({state:'missing'}).description,/当前用户目录安装/);
-  assert.match(integrationStep({state:'awaiting_reload'}).description,/不代表未授权/);
 });
 test('layered connection evidence does not confuse pending tasks with offline',()=>{
   assert.equal(connectionTone({state:'awaiting_reload'}),'neutral');
   assert.equal(connectionTone({state:'awaiting_session',mcp_connected:true}),'confirmed');
-  assert.match(integrationStep({state:'awaiting_session',mcp_connected:true}).title,/连接已确认/);
   assert.equal(connectionTone({state:'session_received'}),'confirmed');
-  assert.equal(integrationStep({state:'awaiting_reload',config_state:'partial',mcp_connected:true}).title,'配置需要检查');
   assert.equal(connectionStatus({state:'sync_verified',config_state:'partial'}),'配置需要检查');
   assert.equal(connectionTone({state:'sync_verified',config_state:'partial'}),'problem');
   assert.equal(evidenceTime(null),'未提供证据时间');

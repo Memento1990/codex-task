@@ -1,0 +1,164 @@
+{
+  "Rust:alloc-stdlib@0.2.4": [
+    {
+      "path": "docs/licenses/dropbox-rust-alloc-no-stdlib-ae42d22078b9-LICENSE",
+      "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+      "source": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE"
+    }
+  ],
+  "Rust:unic-char-property@0.9.0": [
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "Rust:tauri-plugin@2.6.3": [
+    {
+      "path": "docs/licenses/tauri-apps-tauri-6f6ab1207bb3-LICENSE.spdx",
+      "sha256": "5e834fe9788c524210deda859c46a550ffa5aa0cba9ea0572f0d81120e97c008",
+      "source": "https://raw.githubusercontent.com/tauri-apps/tauri/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/LICENSE.spdx"
+    },
+    {
+      "path": "docs/licenses/tauri-apps-tauri-6f6ab1207bb3-LICENSE_APACHE-2.0",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "source": "https://raw.githubusercontent.com/tauri-apps/tauri/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/LICENSE_APACHE-2.0"
+    },
+    {
+      "path": "docs/licenses/tauri-apps-tauri-6f6ab1207bb3-LICENSE_MIT",
+      "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d",
+      "source": "https://raw.githubusercontent.com/tauri-apps/tauri/6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a/LICENSE_MIT"
+    }
+  ],
+  "Rust:unic-common@0.9.0": [
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "Rust:unic-ucd-version@0.9.0": [
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "Rust:webview2-com@0.38.2": [
+    {
+      "path": "docs/licenses/wravery-webview2-rs-b74dc5e2b394-LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "source": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE"
+    }
+  ],
+  "Rust:webview2-com-sys@0.38.2": [
+    {
+      "path": "docs/licenses/wravery-webview2-rs-b74dc5e2b394-LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "source": "https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE"
+    }
+  ],
+  "Rust:unic-char-range@0.9.0": [
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+    },
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-5878605364af-LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT"
+    }
+  ],
+  "Rust:unic-ucd-ident@0.9.0": [
+    {
+      "path": "docs/licenses/open-i18n-rust-unic-8a6ce83063d9-LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "source": "https://raw.githubusercontent.com/open-i18n/rust-unic/8a6ce83063d90b91ae2ce59eddb803edd393fca9/LICENSE-MIT"
+    }
+  ],
+  "Rust:webview2-com-macros@0.8.1": [
+    {
+      "path": "docs/licenses/wravery-webview2-rs-dffa41a8a46d-LICENSE",
+      "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+      "source": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE"
+    }
+  ],
+  "npm:@esbuild/win32-x64@0.25.12": [
+    {
+      "path": "docs/licenses/npm--esbuild-win32-x64-0.25.12-LICENSE.txt",
+      "source": "esbuild@0.25.12/LICENSE.md (same locked platform package release)",
+      "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681"
+    }
+  ],
+  "npm:@rollup/rollup-win32-x64-gnu@4.66.0": [
+    {
+      "path": "docs/licenses/npm--rollup-rollup-win32-x64-gnu-4.66.0-LICENSE.txt",
+      "source": "rollup@4.66.0/LICENSE.md (same locked platform package release)",
+      "sha256": "ad457a6619017a7f47cdbead25a8ec61907818be3e0834f1885bdf6c3ddfb668",
+      "upstream_sha256": "fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8",
+      "normalization": "Trim trailing whitespace and blank lines at EOF; license words unchanged."
+    }
+  ],
+  "npm:@rollup/rollup-win32-x64-msvc@4.66.0": [
+    {
+      "path": "docs/licenses/npm--rollup-rollup-win32-x64-msvc-4.66.0-LICENSE.txt",
+      "source": "rollup@4.66.0/LICENSE.md (same locked platform package release)",
+      "sha256": "ad457a6619017a7f47cdbead25a8ec61907818be3e0834f1885bdf6c3ddfb668",
+      "upstream_sha256": "fa1bd040c5bdeefe65b3821cebf474f2733ce65df13089bd151dda1778e62fe8",
+      "normalization": "Trim trailing whitespace and blank lines at EOF; license words unchanged."
+    }
+  ],
+  "npm:@tauri-apps/cli-win32-x64-msvc@2.11.3": [
+    {
+      "path": "docs/licenses/npm--tauri-apps-cli-win32-x64-msvc-2.11.3-LICENSE.txt",
+      "source": "@tauri-apps/cli@2.11.3/LICENSE_MIT (same locked platform package release)",
+      "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+    }
+  ],
+  "Rust:plist@1.10.3": [
+    {
+      "path": "docs/licenses/SPDX-3.28.0-MIT.txt",
+      "source": "https://raw.githubusercontent.com/spdx/license-list-data/v3.28.0/text/MIT.txt (standard declared license text; authors come from package metadata)",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    }
+  ],
+  "npm:is-reference@3.0.3": [
+    {
+      "path": "docs/licenses/SPDX-3.28.0-MIT.txt",
+      "source": "https://raw.githubusercontent.com/spdx/license-list-data/v3.28.0/text/MIT.txt (standard declared license text; authors come from package metadata)",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    }
+  ],
+  "npm:locate-character@3.0.0": [
+    {
+      "path": "docs/licenses/SPDX-3.28.0-MIT.txt",
+      "source": "https://raw.githubusercontent.com/spdx/license-list-data/v3.28.0/text/MIT.txt (standard declared license text; authors come from package metadata)",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    }
+  ],
+  "Rust:selectors@0.36.1": [
+    {
+      "path": "docs/licenses/SPDX-3.28.0-MPL-2.0.txt",
+      "source": "https://raw.githubusercontent.com/spdx/license-list-data/v3.28.0/text/MPL-2.0.txt (standard declared license text; authors come from package metadata)",
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+      "upstream_sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+      "normalization": "Trim trailing whitespace and blank lines at EOF; license words unchanged."
+    }
+  ]
+}

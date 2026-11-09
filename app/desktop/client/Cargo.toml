@@ -1,0 +1,20 @@
+[package]
+name = "floatboard-client"
+version = "2.0.0"
+edition = "2021"
+
+[dependencies]
+floatboard-protocol = { path = "../protocol" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.151"
+uuid = { version = "=1.29.0", features = ["v4"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "time"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_Time", "Win32_System_SystemInformation", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_System_Com"] }
+
+[[bin]]
+name = "FloatboardHook"
+path = "src/hook_main.rs"
+
+[[bin]]
+name = "FloatboardCtl"
+path = "src/ctl_main.rs"

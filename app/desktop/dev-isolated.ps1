@@ -25,7 +25,7 @@ function Assert-NoReparse([string]$Path) {
         $cursor = $parent
     }
 }
-if (-not $Executable) { $Executable = "D:\Cache\Rust\targets\codex-floatboard-tray-fix\$Configuration\CodexFloatboard.exe" }
+if (-not $Executable) { $Executable = "D:\Cache\Rust\targets\codex-floatboard\$Configuration\CodexFloatboard.exe" }
 $exe = [IO.Path]::GetFullPath($Executable)
 $installed = [IO.Path]::GetFullPath((Join-Path $hostLocal 'Programs'))
 if ($exe.StartsWith($installed.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or
@@ -51,13 +51,16 @@ $config = Join-Path $codex 'config.toml'
 $roaming = Join-Path $root 'roaming'
 $webview = Join-Path $root 'webview'
 $updates = Join-Path $control 'updates/preferences.json'
-$options = Join-Path $data 'preferences.json'
+$options = Join-Path $data 'profile.json'
+$agent=Join-Path (Split-Path $exe -Parent) 'FloatboardAgent.exe'
+$ctl=Join-Path (Split-Path $exe -Parent) 'FloatboardCtl.exe'
+$maintenance=Join-Path (Split-Path $exe -Parent) 'FloatboardMaintenance.exe'
 $paths = @($root,$local,$data,$control,$codex,$config,$roaming,$webview,$updates,$options)
 foreach ($p in $paths) { Assert-NoReparse $p }
 $isolatedEnv = [ordered]@{
     LOCALAPPDATA=$local; APPDATA=$roaming; CODEX_HOME=$codex
     CODEX_FLOATBOARD_DATA=$data; WEBVIEW2_USER_DATA_FOLDER=$webview
-    FLOATBOARD_DEV_ISOLATED='1'; FLOATBOARD_DEVELOPMENT='1'; FLOATBOARD_CODEX_MODE=$CodexMode
+    FLOATBOARD_PROFILE_CONFIG=$options; FLOATBOARD_DEV_ISOLATED='1'; FLOATBOARD_DEVELOPMENT='1'; FLOATBOARD_CODEX_MODE=$CodexMode
 }
 if ($DebugPort -ne 0) { if($DebugPort -lt 1024){throw 'DebugPort must be >=1024'}; $isolatedEnv['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']="--remote-debugging-address=127.0.0.1 --remote-debugging-port=$DebugPort" }
 $summary = [ordered]@{
@@ -73,9 +76,7 @@ if ($CheckOnly) { $summary | ConvertTo-Json -Depth 5; return }
 # Reuse this workspace's existing DEV window before touching its sandbox.
 $existing=Get-CimInstance Win32_Process -Filter "Name='CodexFloatboard.exe'" | Where-Object { $_.ExecutablePath -eq $exe -and $_.CommandLine -like "*$data*" } | Select-Object -First 1
 if ($existing) {
-    $shell=New-Object -ComObject WScript.Shell
-    [void]$shell.AppActivate([int]$existing.ProcessId)
-    Write-Host "DEV already running (PID $($existing.ProcessId)); activated existing window."
+    Write-Host "DEV already running (PID $($existing.ProcessId)); no resources changed."
     return
 }
 Write-Host '[DEV-ISOLATED] Not the production installation.' -ForegroundColor Yellow
@@ -93,12 +94,33 @@ foreach ($dir in $dirs) {
 # Initialize once; preserve DEV hooks/consent across restarts. Never copy production auth/config.
 if ($CodexMode -eq 'isolated' -and -not (Test-Path -LiteralPath $config)) { [IO.File]::WriteAllText($config,'',[Text.UTF8Encoding]::new($false)) }
 [IO.File]::WriteAllText($updates,'{"auto_check":false,"auto_download":false}',[Text.UTF8Encoding]::new($false))
-$desktop = if (Test-Path -LiteralPath $options) { Get-Content -LiteralPath $options -Raw | ConvertFrom-Json -AsHashtable } else { @{} }
-if ($desktop -isnot [Collections.IDictionary]) { throw 'DEV preferences must be a JSON object.' }
-$desktop['show_taskbar']=$true
-$desktop['auto_start']=$false
-$desktop['startup_command']=''
-[IO.File]::WriteAllText($options,($desktop | ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+foreach($binary in @($agent,$ctl,$maintenance)){Assert-NoReparse $binary;if(-not(Test-Path -LiteralPath $binary -PathType Leaf)){throw "Build the Agent, client and maintenance tools first: $binary"}}
+if(-not(Test-Path -LiteralPath $options)){
+    $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0);$listener.Start();$port=([Net.IPEndPoint]$listener.LocalEndpoint).Port;$listener.Stop()
+    $profile=[ordered]@{profile_id=[guid]::NewGuid().ToString();environment='development';owner_sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;root=$data;port=$port;agent_exe=$agent;gui_exe=$exe;codex_home=$codex}
+    [IO.File]::WriteAllText($options,($profile|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+    & $maintenance initialize --profile $options
+    if($LASTEXITCODE -ne 0){throw 'DEV database initialization failed; retained for diagnosis.'}
+}else{
+    $profile=Get-Content -LiteralPath $options -Raw|ConvertFrom-Json
+    if($profile.agent_exe -ne $agent -or $profile.gui_exe -ne $exe -or $profile.codex_home -ne $codex){throw 'DEV profile belongs to another build or Codex mode. Use a separate workspace sandbox.'}
+}
+$agentStart=[Diagnostics.ProcessStartInfo]::new();$agentStart.FileName=$agent;$agentStart.UseShellExecute=$false;$agentStart.CreateNoWindow=$true
+$agentStart.ArgumentList.Add('--profile');$agentStart.ArgumentList.Add($options)
+foreach ($name in @($agentStart.Environment.Keys)) { if ($name -match '^(?i:CODEX_|FLOATBOARD_|OPENAI_|AZURE_OPENAI_|ANTHROPIC_|WEBVIEW2_)') { [void]$agentStart.Environment.Remove($name) } }
+foreach ($entry in $isolatedEnv.GetEnumerator()) { $agentStart.Environment[$entry.Key]=$entry.Value }
+$agentProcess=$null
+& $ctl --profile $options --method identity 2>$null |Out-Null
+if($LASTEXITCODE -ne 0){$agentProcess=[Diagnostics.Process]::Start($agentStart)}
+$deadline=[DateTime]::UtcNow.AddSeconds(20);$ready=$false
+while([DateTime]::UtcNow -lt $deadline){
+    if($agentProcess -and $agentProcess.HasExited){throw "DEV Agent exited ($($agentProcess.ExitCode)); no GUI started."}
+    $identity=& $ctl --profile $options --method identity 2>$null
+    if($LASTEXITCODE -eq 0){$health=$identity|ConvertFrom-Json;if($health.storage.status -ne 'ok'){throw 'DEV storage is unavailable; retained without replacement.'};$ready=$true;break}
+    Start-Sleep -Milliseconds 100
+}
+if(-not $ready){throw 'DEV Agent readiness timed out.'}
+Write-Host "DEV Agent ready: profile $($profile.profile_id), endpoint $($profile.port)"
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName=$exe
 $start.WorkingDirectory=Split-Path $exe -Parent

@@ -1,45 +1,15 @@
-# 自动更新协议与发布操作
+# 更新协议 2
 
-## 策略
+稳定渠道为 GitHub Memento1990/codex-task。自动检查和下载可分别关闭；安装需要明确确认。DEV 禁止正式更新。
 
-稳定渠道固定使用GitHub Memento1990/codex-task正式Release。后台启动20秒后检查，之后每6小时检查；默认自动检查、自动下载，可关闭。安装需要明确确认，仅退出当前看板，不结束Codex、Reporter或采集器。关闭面板不取消下载。无生产签名公钥的开发构建明确不支持自动更新。
+签名清单包含 schema=2、updater_protocol=2、agent_protocol=2、database_schema_min/max、minimum_version、version、platform、url、size、sha256。兼容范围必须明确，不使用“向后兼容”常量。当前仅支持 schema 2。
 
-## 首次升级
+原始 manifest 字节使用 Ed25519 签名，公钥固定在 update-public-key.txt 并嵌入全部程序。私钥在受保护的仓库外位置，不进入程序、日志和资产。SHA256SUMS 不能替代签名。package-release 检查实际二进制身份；verify-release 独立复核签名和全部资产。
 
-0.8.1没有更新客户端，需要手动下载一次采用新目录结构的0.9.0。完整解压后运行根目录CodexFloatboard.exe（Rust启动入口），不要直接为versions中的GUI创建固定快捷方式。根目录包含current.json与versions/<version>。开机自启指向固定入口。旧便携平铺目录不原地覆盖。
+更新事务顺序：停写、备份、正常停止 Agent、同互斥权离线校验、切版本及计划任务、恢复 owned 接入、新 Agent 保持暂停、新 GUI/实际库/OAuth 验证、开放写入。journal 持久化每个阶段，可检查后继续。正常退出不触发失败重启；旧任务先禁用，避免切换时抢启。
 
-## 更新安全
+新版本接收写入后，不会自动恢复旧库或程序入口。程序回退只能由离线维护确认 schema 兼容性后执行；数据库恢复必须到新目标。遇到旧更新 journal 明确转专用迁移流程，不继续旧回退机制。
 
-原始manifest字节以Ed25519签名，signature为base64文本。公钥通过构建环境FLOATBOARD_UPDATE_PUBLIC_KEY内置到所有核心二进制。签名私钥绝不放仓库、应用包、日志或release资产。SHA256SUMS供人工核对，不能代替签名。
+1.x 首次迁移使用 [专用安装入口](migration-install.md)。普通更新不承担历史冲突自动裁决，不强杀 Codex 或旧写入者，不改非本产品配置。
 
-manifest字段：schema=1,version,platform=windows-x86_64,minimum_version,updater_protocol=1,data_compatibility=backward-compatible,url,size,sha256。仅支持正式更高版本，拒绝不兼容协议和不可逆数据迁移。下载限大小，限定官方仓库URL及官方资产重定向。解压采用根文件名白名单，不接受目录、路径穿越、符号链接或重复文件，限制总解压量。
-
-安装helper再次验证清单签名和归档hash，不信任UI传入路径。先解压版本目录，再等待旧GUI正常退出（不kill），以journal切换current.json。新GUI完成主窗口snapshot后返回带nonce健康确认。启动失败或缺少确认则恢复旧入口；新进程未退出时不强制结束，不并发启动旧GUI。数据目录完全独立，不随应用回退覆盖数据库。旧Reporter版本保留，不能删除活动会话占用的文件。安装准备失败留下的.staging目录目前保留供诊断，不自动清理应用版本目录；后续可在全部相关进程退出后人工检查清理。缓存下载文件则按版本与hash寻址复用，重启复验恢复ready，并清理受控命名的旧缓存。
-
-## 密钥准备（仅发布维护者）
-
-1. 构建FloatboardRelease离线工具。用 `FloatboardRelease keygen <受保护的仓库外路径>` 创建32字节随机私钥，记录输出公钥。
-2. 验证该外部文件的Windows ACL仅允许维护者/必要系统管理员读取，备份到离线安全存储。工具不会替代操作系统ACL策略。
-3. 构建前设置 `FLOATBOARD_UPDATE_PUBLIC_KEY` 为输出公钥；签名时额外设置 `FLOATBOARD_UPDATE_PRIVATE_KEY_FILE` 指向私钥文件。
-4. 所有GUI/Reporter/Updater/Launcher必须使用相同公钥构建；测试用fixture密钥不能用于生产发行。
-5. GitHub Actions中可将私钥放受保护environment secret，限制tag及审批；不在普通PR构建暴露签名环境。
-
-本机已按用户确认创建生产密钥，私钥位于当前用户LOCALAPPDATA下CodexFloatboard/signing/update-ed25519.key，目录ACL仅当前用户和SYSTEM。仓库app/desktop/update-public-key.txt只含公钥，build-native自动读取并拒绝与环境变量冲突。发布打包逐个运行GUI/Reporter/Updater/Launcher的--build-identity，核对实际版本、公钥和协议，不接受旧key或旧版本二进制。请维护者将私钥备份至安全离线位置；不要将整个用户控制目录上传。
-
-## 发布包
-
-`app/desktop/package-release.ps1 -TargetDirectory <release目标> -OutputDirectory <全新输出目录> -Version 0.9.0 -SignUpdate`。
-
-生成普通便携zip、更新专用zip、manifest、signature与SHA256SUMS。FloatboardRelease.exe仅发布端使用，不进入产品包。输出目录已存在时拒绝覆盖，避免无意替换既有Release资产。签名工具验证私钥与构建公钥匹配。发布前在隔离环境验证从旧版本完整升级、篡改拒绝与失败恢复，再将五项资产作为同一正式Release上传。
-
-## GitHub匿名限流
-
-共享代理IP可能耗尽GitHub匿名API每小时配额。客户端不要求用户Token；API限流时尝试同一官方仓库latest/download的签名清单入口，仍需数字签名验证，绝不改用第三方镜像。旧Release没有签名清单时应明确报告暂时无法检查，不把403/404当作已是最新版。
-
-## 构建提醒
-
-GUI正式构建使用Tauri CLI（build-native release）；不要直接cargo build当作发行GUI。直接cargo build若未启用tauri/custom-protocol会仍打开devUrl而非嵌入前端，必须启用该特性并实测原生窗口。打包身份校验只验证版本/key/protocol，不能替代真实GUI启动验收。
-
-## 安全与运行边界
-
-系统代理、GitHub限流与网络不可达不阻塞任务采集。自动更新不代替Codex重新加载或Hook信任；应用更新不得静默改接入声明。控制目录不是抵御同用户恶意代码的安全边界，HTTPS与更新签名也不替代Windows代码签名。
+发布使用 [publish-release.ps1](../app/desktop/publish-release.ps1)，详见 [发布手册](releasing.md)。正式私钥仅按已登记路径由签名工具读取，不生成替代密钥绕过公钥。

@@ -1,32 +1,23 @@
-# 桌面测试与原生验收
-
-## 自动测试
-
-从仓库根目录运行：
+# 回归入口
 
 ```powershell
 pnpm --dir app/desktop test
-pnpm --dir app/desktop build
-cargo test --manifest-path app/desktop/reporter/Cargo.toml --locked
+pwsh -NoProfile -File app/desktop/build-native.ps1 -Phase test-runtime
+pwsh -NoProfile -File app/desktop/build-native.ps1 -Phase test-core
+pwsh -NoProfile -File app/desktop/build-native.ps1 -Phase release
 ```
 
-Rust 测试使用临时数据目录、合成会话和隔离的注册表测试键；进程测试会启动并回收测试采集器。不要将正式 Codex 配置或任务库传入测试。
+protocol/client/agent 的测试覆盖协议、事务、幂等、实例竞争和真实进程；storage/shell 覆盖投影、计时、通知、签名包及安装中断续跑。安装测试使用手动测试计划任务、独立 DEV profile、合成签名密钥，不登记正式登录自启。
 
-`reporter/tests/fixtures/legacy-events.sqlite3` 和 `legacy-tasks.json` 是旧数据兼容基线，不是待清理的运行数据；删除旧 Python 实现不影响这些测试。
+前端 tests/*.test.ts 是逻辑和契约检查；native-*.cjs 是历史场景片段，复用须传入本轮独立 CDP，不能直接指向现有实例。本轮实际执行入口及结果见 artifacts/agent-runtime-20261109/acceptance.md。
 
-## 原生交互验收
+真实 Tauri 验证遵循 docs/automated-regression.md：显式构建、官方 wrapper、-CodexMode isolated、Win32 CreateDesktop、loopback CDP，不切换用户 Desktop 或注入系统输入。只清理本轮有身份记录的资源。
 
-`native-ui.cjs`、`native-completed.cjs` 和 `native-notifications.cjs` 是交给外部 Playwright/CDP 运行器执行的 `async (page) => ...` 函数片段，不是可直接用 Node 运行的独立测试，也未包含在 `pnpm test` 中。
+签名包构建并通过 verify-release 后，用 Python 3.11+ 和 psutil 执行专用入口回归（不启动 GUI）：
 
-运行前必须：
+```powershell
+python app/desktop/tests/migration-entry.py --assets <已验证资产目录> --evidence <本轮证据根> --version 2.0.0
+python app/desktop/tests/migration-entry.py --assets <已验证资产目录> --evidence <本轮证据根> --version 2.0.0 --no-states --legacy-receipt
+```
 
-1. 构建当前 GUI 和 Reporter，置于同一目录。
-2. 设置独立的 `CODEX_HOME` 和 `CODEX_FLOATBOARD_DATA`（或向程序传入 `--data-dir`），使用临时配置和合成任务；必须在启动 GUI 前设置，确保其子进程继承隔离环境。
-3. 使用可连接真实 Tauri WebView2 的外部运行器，预先准备合成数据。界面片段依赖特定任务标题和数量，不会自动装载夹具；可参考 `../public/fixture.json` 的演示内容。
-4. 从固定工作目录执行片段；截图输出到相对该目录的 `test-results/native/`，运行器应先创建该目录。
-
-主窗片段会实际执行连接/断开操作，通知片段会实际保存偏好；不得附着正式运行实例。普通 Vite 浏览器页面不能替代原生验收。清理临时数据前，先退出测试 GUI 并回收测试采集器。
-
-`window-probe.ps1` 使用 Win32 API 检查或调整指定进程窗口，必须显式传入测试进程的 `TargetProcessId`，不可对日常实例执行。
-
-公开发行的历史验证摘要见仓库根目录 `docs/releases/v0.7.0-validation.md`，不代表每次源码修改均已重新执行原生验收。
+每次创建独立 DEV UUID、中文库名、配置副本和手动测试任务；覆盖包内 Preview/Capture/Apply/Cutover、单元素与空数组、设置、旧回执归属、非本产品配置保留。激活须另经原生 GUI/OAuth 验收。结束正常停止自有 Agent、删除自有任务，保留结果与失败现场。

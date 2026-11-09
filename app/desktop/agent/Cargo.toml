@@ -1,0 +1,31 @@
+[package]
+name = "floatboard-agent"
+version = "2.0.0"
+edition = "2021"
+
+[dependencies]
+floatboard-protocol = { path = "../protocol" }
+floatboard-client = { path = "../client" }
+floatboard-storage = { path = "../storage" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.151"
+uuid = { version = "=1.29.0", features = ["v4"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+tokio-util = "0.7"
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+axum = { version = "0.8", features = ["form", "query"] }
+base64 = "0.22"
+rand = "0.8"
+sha2 = "=0.10.9"
+url = "2"
+rusqlite = { version = "=0.41.1", features = ["bundled", "backup"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+toml_edit = { version = "=0.25.13", features = ["serde"] }
+
+[[bin]]
+name = "FloatboardAgent"
+path = "src/main.rs"
+
+[[bin]]
+name = "FloatboardMaintenance"
+path = "src/maintenance_main.rs"

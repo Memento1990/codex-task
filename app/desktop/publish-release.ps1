@@ -15,7 +15,7 @@ Set-StrictMode -Version Latest
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $repository='Memento1990/codex-task'
 $tag="v$Version"
-$versionPaths=@('app/desktop/package.json','app/desktop/pnpm-lock.yaml','app/desktop/reporter/Cargo.toml','app/desktop/reporter/Cargo.lock','app/desktop/src-tauri/Cargo.toml','app/desktop/src-tauri/Cargo.lock','app/desktop/src-tauri/tauri.conf.json')
+$versionPaths=@('app/desktop/package.json','app/desktop/pnpm-lock.yaml','app/desktop/protocol/Cargo.toml','app/desktop/client/Cargo.toml','app/desktop/agent/Cargo.toml','app/desktop/storage/Cargo.toml','app/desktop/shell/Cargo.toml','app/desktop/Cargo.lock','app/desktop/src-tauri/Cargo.toml','app/desktop/src-tauri/tauri.conf.json')
 function Run([string]$Exe,[string[]]$Arguments) {
  Write-Host ('> '+$Exe+' '+($Arguments -join ' '))
  & $Exe @Arguments
@@ -66,6 +66,15 @@ function AssertDirty([string[]]$Allowed) {
   if($file.StartsWith('app/') -and $file -notin $Allowed){throw "Untracked application source not allowed: $file"}
  }
 }
+function AssertWhitespace([string[]]$Allowed) {
+ Run 'git' @('-C',$repo,'diff','--check','HEAD','--')
+ $untracked=@(Lines (RepoGit @('ls-files','--others','--exclude-standard')))
+ foreach($file in $Allowed){if($file -in $untracked){
+  & git -C $repo diff --no-index --check -- /dev/null (Join-Path $repo $file)
+  # --no-index returns 1 for a clean new file and 3 for whitespace errors.
+  if($LASTEXITCODE -notin @(0,1)){throw "Untracked source whitespace check failed: $file"}
+ }}
+}
 function SourceInventory([string[]]$Extra) {
  $files=@((Lines (RepoGit @('ls-files')))+$Extra | Sort-Object -Unique)
  @($files | ForEach-Object {
@@ -90,6 +99,7 @@ try {
   $allowed=@(@($StagePaths | ForEach-Object {SafeRelative $_})+$versionPaths | Sort-Object -Unique)
   AssertRepository
   AssertDirty $allowed
+  AssertWhitespace $allowed
   if(!$PreparedDirectory){$PreparedDirectory=Join-Path ([IO.Path]::GetTempPath()) ("floatboard-release-$Version-"+[guid]::NewGuid().ToString('N'))}
   $directory=[IO.Path]::GetFullPath($PreparedDirectory)
   if(Test-Path -LiteralPath $directory){throw 'PreparedDirectory must not exist; never reusing release outputs'}
@@ -108,7 +118,7 @@ try {
    if($rx.Matches($text).Count -ne 1){throw "Ambiguous version field: $relative"}
    WriteUtf8 $file ($rx.Replace($text,('${1}'+$Version+'${2}')))
   }
-  foreach($relative in @('app/desktop/reporter/Cargo.toml','app/desktop/src-tauri/Cargo.toml')){
+  foreach($relative in @('protocol','client','agent','storage','shell','src-tauri' | ForEach-Object {"app/desktop/$_/Cargo.toml"})){
    $file=Join-Path $repo $relative;$text=[IO.File]::ReadAllText($file)
    $rx=[regex]'(?m)^version = "[^"]+"\r?$'
    if($rx.Matches($text).Count -ne 1){throw "Ambiguous package version: $relative"}
@@ -117,7 +127,7 @@ try {
   Set-Location -LiteralPath $PSScriptRoot
   Run 'pnpm' @('install','--lockfile-only','--offline','--ignore-scripts')
   # Preserve reviewed dependency resolutions; metadata updates only necessary lock entries.
-  foreach($manifest in @('reporter/Cargo.toml','src-tauri/Cargo.toml')){$null=Capture 'cargo' @('metadata','--manifest-path',$manifest,'--offline','--filter-platform','x86_64-pc-windows-msvc','--format-version','1')}
+  foreach($manifest in @('Cargo.toml')){$null=Capture 'cargo' @('metadata','--manifest-path',$manifest,'--offline','--filter-platform','x86_64-pc-windows-msvc','--format-version','1')}
   $env:CARGO_TARGET_DIR=Join-Path $directory 'target'
   $before=InventoryHash (SourceInventory $allowed)
   Run 'pnpm' @('install','--offline','--frozen-lockfile','--ignore-scripts')
@@ -126,7 +136,7 @@ try {
   Run 'pwsh' @('-NoProfile','-File',(Join-Path $PSScriptRoot 'build-native.ps1'),'-Phase','test-core')
   # Dot-sourcing retains the local MSVC/SDK environment for native Rust tests.
   Run 'pwsh' @('-NoProfile','-Command',(". '"+(Join-Path $PSScriptRoot 'build-native.ps1').Replace("'","''")+"' -Phase check; cargo test --manifest-path src-tauri/Cargo.toml --locked; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }"))
-  Run 'pwsh' @('-NoProfile','-File',(Join-Path $PSScriptRoot 'build-native.ps1'),'-Phase','reporter')
+  Run 'pwsh' @('-NoProfile','-File',(Join-Path $PSScriptRoot 'build-native.ps1'),'-Phase','test-runtime')
   Run 'pwsh' @('-NoProfile','-File',(Join-Path $PSScriptRoot 'build-native.ps1'),'-Phase','release')
   if((InventoryHash (SourceInventory $allowed)) -ne $before){throw 'Source changed during build; prepare again in a new directory'}
   $assets=Join-Path $directory 'assets'
